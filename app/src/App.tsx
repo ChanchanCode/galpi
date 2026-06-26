@@ -1,8 +1,9 @@
 // 앱 루트 — 라이브러리 ↔ 리더. 전역 설정 모달 + 테마 + PDF 드래그-드롭 추출.
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { PaperDocument } from "./types";
 import type { DocSummary } from "../electron/preload";
 import { BlockRenderer } from "./render/BlockRenderer";
+import { buildFootnotes, FootnoteContext } from "./render/footnotes";
 import { TypographyPanel } from "./typography/TypographyPanel";
 import { SelectionTranslate } from "./translate/SelectionTranslate";
 import { useStore, registerFonts } from "./store/useStore";
@@ -104,6 +105,7 @@ export function App() {
 
   const openSummary = docs.find((d) => d.doc_id === doc?.doc_id);
   const cssVars = toCssVars(typography) as CSSProperties;
+  const footnotes = useMemo(() => (doc ? buildFootnotes(doc.blocks) : null), [doc]);
 
   const dropProps = {
     onDragOver: (e: React.DragEvent) => { e.preventDefault(); setDragging(true); },
@@ -125,14 +127,34 @@ export function App() {
           </header>
           <div className="reader-body">
             <main className="reader-scroll">
-              <article className="reader-content" style={cssVars}>
-                {doc.blocks.map((b) => (
-                  <BlockRenderer key={b.id} block={b} docId={doc.doc_id} />
-                ))}
-                {openSummary?.state === "extracting" && (
-                  <p className="extract-more">⏳ 남은 페이지 추출 중… 완료되는 대로 이어집니다.</p>
-                )}
-              </article>
+              <FootnoteContext.Provider value={footnotes?.byLabel ?? new Map()}>
+                <article className="reader-content" style={cssVars}>
+                  {doc.blocks
+                    .filter((b) => !footnotes?.pulled.has(b.id))
+                    .map((b) => (
+                      <BlockRenderer key={b.id} block={b} docId={doc.doc_id} />
+                    ))}
+                  {openSummary?.state === "extracting" && (
+                    <p className="extract-more">⏳ 남은 페이지 추출 중… 완료되는 대로 이어집니다.</p>
+                  )}
+                  {footnotes && footnotes.ordered.length > 0 && (
+                    <details className="footnotes-section">
+                      <summary>각주 {footnotes.ordered.length}개</summary>
+                      <ol className="footnotes-list">
+                        {footnotes.ordered.map((fn) => (
+                          <li key={fn.label}>
+                            <span className="fn-list-label">{fn.label}</span>
+                            <BlockRenderer
+                              block={{ id: `fn-${fn.label}`, type: "footnote", page: 0, bbox: null, text: fn.html }}
+                              docId={doc.doc_id}
+                            />
+                          </li>
+                        ))}
+                      </ol>
+                    </details>
+                  )}
+                </article>
+              </FootnoteContext.Provider>
             </main>
           </div>
           <SelectionTranslate containerSel=".reader-content" />

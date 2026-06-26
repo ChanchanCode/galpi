@@ -194,3 +194,33 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-family);
   padding: 10px 18px; border-radius: 10px; font-size: 0.9rem; max-width: 80vw;
   box-shadow: 0 6px 24px rgba(0,0,0,0.35); white-space: pre-wrap;
 }
+
+/* ── 각주: 본문 참조 마커 + 팝오버 + 끝 모아보기 ── */
+.fn-ref {
+  color: var(--accent); cursor: pointer; font-weight: 600;
+  padding: 0 1px; border-radius: 3px;
+}
+.fn-ref::before { content: "["; }
+.fn-ref::after { content: "]"; }
+.fn-ref:hover, .fn-ref.on { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.fn-pop {
+  position: fixed; z-index: 60; width: 360px; max-width: 84vw;
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--rule); border-radius: 10px; padding: 10px 14px;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.3);
+  font-size: 0.86rem; line-height: 1.55; text-align: left;
+  display: flex; gap: 8px;
+}
+.fn-pop-label { color: var(--accent); font-weight: 700; flex: none; }
+.fn-pop-body { min-width: 0; }
+
+.footnotes-section { margin-top: 2.5em; border-top: 1px solid var(--rule); padding-top: 12px; }
+.footnotes-section summary {
+  cursor: pointer; color: var(--muted); font-size: 0.9rem; list-style: none;
+  padding: 6px 0; user-select: none;
+}
+.footnotes-section summary::before { content: "▸ "; }
+.footnotes-section[open] summary::before { content: "▾ "; }
+.footnotes-list { margin: 6px 0 0; padding-left: 1.4em; color: var(--muted); font-size: 0.88em; }
+.footnotes-list li { margin: 6px 0; }
+.fn-list-label { color: var(--accent); font-weight: 600; margin-right: 6px; }

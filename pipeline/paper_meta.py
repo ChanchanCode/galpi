@@ -25,35 +25,60 @@ def _clean_authors(line: str) -> str:
     return s.strip(" ,;·")
 
 
-# 저자 줄 다음에 나오면 본문/소속 시작으로 간주하는 신호
+# 저자 줄 다음에 나오면 소속/본문 시작으로 간주하는 신호(여기서 수집 중단)
 _STOP = re.compile(
-    r"university|department|school|institute|avenue|street|\bst\.|\bemail\b|"
-    r"article\s*info|a\s*r\s*t\s*i\s*c\s*l\s*e|abstract|@|^\d",
+    r"university|department|school|institute|college|avenue|street|\bst\.|\bemail\b|"
+    r"article\s*info|a\s*r\s*t\s*i\s*c\s*l\s*e|abstract|^jel\b|keywords|received|@|^\d",
     re.I,
 )
 
 
+def _norm(s: str) -> str:
+    s = re.sub(r"[‐‑‒–—−]", "-", s)  # 각종 하이픈/대시 통일
+    return re.sub(r"\s+", " ", s.strip().lower())
+
+
 def _authors_from_page1(doc: fitz.Document, title: str | None) -> str | None:
-    """1페이지에서 제목 다음 줄(저자)을 찾아 정리."""
-    lines = [ln.strip() for ln in doc[0].get_text("text").split("\n")]
-    lines = [ln for ln in lines if ln]
-    # 제목 줄 위치 찾기
-    start = 0
-    if title:
-        tnorm = title.lower()
-        for i, ln in enumerate(lines):
-            if ln.lower().startswith(tnorm[:24]):
-                start = i + 1
-                break
-    # 제목 다음 첫 줄이 저자(소속/abstract 신호가 아니어야)
-    for ln in lines[start : start + 4]:
+    """1페이지에서 (제목 끝 다음 ~ STOP 신호 전)을 저자로 수집.
+
+    제목이 여러 줄로 쪼개질 수 있어, 메타데이터 제목과 줄을 누적 매칭해 제목 끝을 찾는다.
+    """
+    if not title:
+        return None
+    lines = [ln.strip() for ln in doc[0].get_text("text").split("\n") if ln.strip()]
+    tnorm = _norm(title)
+
+    # 제목 시작/끝 찾기: 누적 concat 이 tnorm 의 prefix 인 동안 제목으로 간주
+    title_end = -1
+    for i, ln in enumerate(lines):
+        if not _norm(ln) or _norm(ln) != tnorm and not tnorm.startswith(_norm(ln)):
+            continue
+        acc = _norm(ln)
+        j = i
+        while acc != tnorm and j + 1 < len(lines) and tnorm.startswith(acc):
+            j += 1
+            acc = _norm(acc + " " + lines[j])
+        if acc == tnorm:
+            title_end = j
+            break
+    if title_end < 0:
+        return None
+
+    # 제목 끝 다음부터 STOP 전까지 수집(최대 3줄)
+    collected: list[str] = []
+    for ln in lines[title_end + 1 : title_end + 4]:
         if _STOP.search(ln):
             break
-        cleaned = _clean_authors(ln)
-        # 사람 이름다운가: 대문자로 시작하는 토큰이 2개 이상
-        if len(re.findall(r"[A-Z][a-zà-ÿ]+", cleaned)) >= 2:
-            return cleaned
-    return None
+        collected.append(ln)
+    if not collected:
+        return None
+    cleaned = _clean_authors(" ".join(collected))
+    # 사람 이름다운가(대문자 시작 토큰 2개+, 전부 대문자 이름도 허용) + 제목 조각 아님
+    if len(re.findall(r"\b[A-ZÀ-Þ][A-Za-zÀ-ÿ’'.-]+", cleaned)) < 2:
+        return None
+    if _norm(cleaned) and _norm(cleaned) in tnorm:
+        return None
+    return cleaned
 
 
 def _journal_from_subject(subject: str | None) -> str | None:
