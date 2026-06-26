@@ -76,6 +76,16 @@ export function SelectionTranslate({ containerSel }: { containerSel: string }) {
     return () => document.removeEventListener("contextmenu", onCtx);
   }, [getSelectionInContainer, translate]);
 
+  // 바깥 클릭 시 닫기 (팝오버 내부 클릭은 유지)
+  useEffect(() => {
+    if (!anchor) return;
+    const onDown = (e: MouseEvent) => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) close();
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [anchor, close]);
+
   if (!anchor) return null;
 
   // 화면 경계 보정
