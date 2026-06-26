@@ -86,6 +86,7 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-family);
   max-width: var(--content-max-width);
   margin: 0 auto;
   padding: var(--page-padding);
+  font-family: var(--font-family); /* 본문 글꼴: 변수 직접 적용(없으면 변경 안 먹음) */
   font-size: var(--font-size);
   line-height: var(--line-height);
   letter-spacing: var(--letter-spacing);
@@ -100,8 +101,12 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-family);
 .blk-figure { margin: 1.5em 0; text-align: center; }
 .blk-figure img, .table-image { max-width: 100%; height: auto; }
 .blk-formula { margin: 1.2em 0; text-align: center; font-size: calc(1em * var(--math-scale)); }
-/* 넓은 display 수식은 가로 스크롤로 (잘림·\tag 충돌 방지) */
-.blk-formula .katex-display { overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+/* 식 번호(\tag)를 수식과 분리: [좌 균형용][수식 가운데][우 번호]. 겹침 방지. */
+.eq-row { display: flex; align-items: center; gap: 8px; width: 100%; }
+.eq-body { flex: 1 1 auto; min-width: 0; overflow-x: auto; overflow-y: hidden; text-align: center; }
+.eq-body .katex-display { margin: 0; }
+.eq-side { flex: 0 0 auto; visibility: hidden; white-space: nowrap; padding: 0 4px; } /* 좌측 균형용(투명) */
+.eq-num { visibility: visible; color: var(--muted); }
 .formula-inline { font-size: calc(1em * var(--math-scale)); }
 
 /* 표 */
