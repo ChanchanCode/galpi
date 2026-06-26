@@ -12,14 +12,25 @@
   --page-padding: 48px;
 }
 
-/* 테마 (§6.2) — data-theme 으로 전환 */
-[data-theme="light"] { --bg: #ffffff; --fg: #1a1a1a; --muted: #6b6b6b; --rule: #e3e3e3; --accent: #2563eb; }
-[data-theme="sepia"] { --bg: #f4ecd8; --fg: #433422; --muted: #8a7559; --rule: #ddcfae; --accent: #9a6a2f; }
-[data-theme="dark"]  { --bg: #1c1c1e; --fg: #e6e6e6; --muted: #9a9a9a; --rule: #3a3a3c; --accent: #6ea8ff; }
+/* 테마 (§6.2) — data-theme 으로 전환. --scrollbar-thumb 는 스크롤바 색. */
+[data-theme="light"] { --bg: #ffffff; --fg: #1a1a1a; --muted: #6b6b6b; --rule: #e3e3e3; --accent: #2563eb; --scrollbar-thumb: #c4c4c4; color-scheme: light; }
+[data-theme="sepia"] { --bg: #f4ecd8; --fg: #433422; --muted: #8a7559; --rule: #ddcfae; --accent: #9a6a2f; --scrollbar-thumb: #c2ad86; color-scheme: light; }
+[data-theme="dark"]  { --bg: #1c1c1e; --fg: #e6e6e6; --muted: #9a9a9a; --rule: #3a3a3c; --accent: #6ea8ff; --scrollbar-thumb: #555558; color-scheme: dark; }
 
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
 body { background: var(--bg); color: var(--fg); font-family: var(--font-family); }
+
+/* 테마 연동 스크롤바 (Electron=Chromium). track=배경, thumb=테마 색. */
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb, #c4c4c4);
+  border-radius: 7px;
+  border: 3px solid var(--bg); /* track 색 테두리로 thumb 가 얇아 보이게 */
+}
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+::-webkit-scrollbar-corner { background: var(--bg); }
 
 /* ── 라이브러리 ── */
 .library-root { max-width: 760px; margin: 0 auto; padding: 48px 24px; }
