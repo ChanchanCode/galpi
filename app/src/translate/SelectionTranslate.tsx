@@ -1,5 +1,6 @@
-// 선택 텍스트 번역 (로컬 NLLB). 본문에서 드래그 선택 → 떠오르는 "번역" 버튼
-// 또는 단축키(T)로 번역 → 팝오버 표시. (§8 형광펜 미니툴바와 UX 공유 예정)
+// 선택 텍스트 번역 (로컬 NLLB) — 단축키 전용(자동 팝업 없음).
+// 본문에서 텍스트 선택 후 T 키 또는 우클릭 → 팝오버에 번역.
+// (선택할 때마다 뜨던 자동 버튼은 사용자 요청으로 제거. §8 형광펜과 선택 충돌 방지)
 import { useCallback, useEffect, useRef, useState } from "react";
 
 interface Anchor {
@@ -14,7 +15,7 @@ export function SelectionTranslate({ containerSel }: { containerSel: string }) {
   const [loading, setLoading] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
 
-  // 현재 선택이 본문 컨테이너 안인지 + 텍스트 반환
+  // 현재 선택이 본문 컨테이너 안인지 + 위치/텍스트 반환
   const getSelectionInContainer = useCallback((): Anchor | null => {
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || !sel.rangeCount) return null;
@@ -27,57 +28,57 @@ export function SelectionTranslate({ containerSel }: { containerSel: string }) {
     return { x: rect.left + rect.width / 2, y: rect.bottom, text };
   }, [containerSel]);
 
-  // 드래그 선택이 끝나면 앵커(번역 버튼) 표시
-  useEffect(() => {
-    const onUp = () => {
-      const a = getSelectionInContainer();
-      if (a) {
-        setAnchor(a);
-        setResult(null);
-      } else if (!boxRef.current?.matches(":hover")) {
-        setAnchor(null);
-      }
-    };
-    document.addEventListener("mouseup", onUp);
-    return () => document.removeEventListener("mouseup", onUp);
-  }, [getSelectionInContainer]);
-
-  const doTranslate = useCallback(async (text: string) => {
+  const translate = useCallback(async (a: Anchor) => {
+    setAnchor(a);
     setLoading(true);
     setResult(null);
     try {
-      const res = await window.paperAPI.translate(text);
+      const res = await window.paperAPI.translate(a.text);
       setResult(res.error ? `⚠️ ${res.error}` : res.translation ?? "");
     } finally {
       setLoading(false);
     }
   }, []);
 
-  // 단축키 T: 현재 선택 즉시 번역 / Esc: 닫기
+  const close = useCallback(() => {
+    setAnchor(null);
+    setResult(null);
+  }, []);
+
+  // 단축키 T: 현재 선택 번역 / Esc: 닫기
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setAnchor(null);
-        setResult(null);
-        return;
-      }
+      if (e.key === "Escape") return close();
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-      if ((e.key === "t" || e.key === "T") && !e.metaKey && !e.ctrlKey) {
+      if ((e.key === "t" || e.key === "T") && !e.metaKey && !e.ctrlKey && !e.altKey) {
         const a = getSelectionInContainer();
         if (a) {
-          setAnchor(a);
-          doTranslate(a.text);
+          e.preventDefault();
+          translate(a);
         }
       }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [getSelectionInContainer, doTranslate]);
+  }, [getSelectionInContainer, translate, close]);
+
+  // 우클릭: 선택이 있으면 번역(기본 컨텍스트 메뉴 대신)
+  useEffect(() => {
+    const onCtx = (e: MouseEvent) => {
+      const a = getSelectionInContainer();
+      if (a) {
+        e.preventDefault();
+        translate(a);
+      }
+    };
+    document.addEventListener("contextmenu", onCtx);
+    return () => document.removeEventListener("contextmenu", onCtx);
+  }, [getSelectionInContainer, translate]);
 
   if (!anchor) return null;
 
-  // 화면 경계 보정(팝오버가 우측/하단을 벗어나지 않게)
+  // 화면 경계 보정
   const left = Math.min(anchor.x, window.innerWidth - 360);
   const top = Math.min(anchor.y + 8, window.innerHeight - 220);
 
@@ -86,28 +87,21 @@ export function SelectionTranslate({ containerSel }: { containerSel: string }) {
       ref={boxRef}
       className="sel-translate"
       style={{ left: Math.max(8, left), top }}
-      onMouseDown={(e) => e.preventDefault()} // 선택 유지
+      onMouseDown={(e) => e.preventDefault()}
     >
-      {result === null && !loading && (
-        <button className="sel-btn" onClick={() => doTranslate(anchor.text)}>
-          번역 (T)
-        </button>
-      )}
-      {(loading || result !== null) && (
-        <div className="sel-popover">
-          <div className="sel-src">{anchor.text}</div>
-          <div className="sel-divider" />
-          {loading ? (
-            <div className="sel-loading">번역 중… (첫 실행은 모델 로딩으로 느릴 수 있어요)</div>
-          ) : (
-            <div className="sel-result">{result}</div>
-          )}
-          <div className="sel-foot">
-            <span className="sel-engine">로컬 NLLB · 오프라인</span>
-            <button className="sel-close" onClick={() => { setAnchor(null); setResult(null); }}>닫기</button>
-          </div>
+      <div className="sel-popover">
+        <div className="sel-src">{anchor.text}</div>
+        <div className="sel-divider" />
+        {loading ? (
+          <div className="sel-loading">번역 중… (첫 실행은 모델 로딩으로 느릴 수 있어요)</div>
+        ) : (
+          <div className="sel-result">{result}</div>
+        )}
+        <div className="sel-foot">
+          <span className="sel-engine">로컬 NLLB · 오프라인</span>
+          <button className="sel-close" onClick={close}>닫기</button>
         </div>
-      )}
+      </div>
     </div>
   );
 }
