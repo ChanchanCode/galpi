@@ -1,4 +1,4 @@
-// 앱 루트 — 라이브러리 ↔ 리더. Phase 3 타이포 + 페이지 스트리밍 라이브 갱신 + 번역.
+// 앱 루트 — 라이브러리 ↔ 리더. 전역 설정 모달 + 테마 + PDF 드래그-드롭 추출.
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { PaperDocument } from "./types";
 import type { DocSummary } from "../electron/preload";
@@ -8,28 +8,35 @@ import { SelectionTranslate } from "./translate/SelectionTranslate";
 import { useStore, registerFonts } from "./store/useStore";
 import { toCssVars } from "./store/typography";
 
+const GEAR = "⚙";
+
 export function App() {
   const [docs, setDocs] = useState<DocSummary[]>([]);
   const [doc, setDoc] = useState<PaperDocument | null>(null);
   const [loading, setLoading] = useState(false);
-  const [panelOpen, setPanelOpen] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
   const openDocId = useRef<string | null>(null);
 
   const typography = useStore((s) => s.typography);
   const userFonts = useStore((s) => s.userFonts);
   const initSession = useStore((s) => s.initSession);
-  const loadDocState = useStore((s) => s.loadDocState);
 
   useEffect(() => {
     initSession();
     refreshDocs();
-    // 추출 진행/완료 라이브 통지: 라이브러리 + 열린 문서 갱신(페이지 스트리밍)
     const off = window.paperAPI.onDocsChanged(() => {
       refreshDocs();
       if (openDocId.current) reloadOpenDoc(openDocId.current);
     });
     return off;
   }, []);
+
+  // 테마를 문서 전체(라이브러리 포함)에 적용
+  useEffect(() => {
+    document.body.dataset.theme = typography.theme;
+  }, [typography.theme]);
 
   useEffect(() => {
     if (userFonts.length) registerFonts(userFonts);
@@ -39,7 +46,6 @@ export function App() {
     window.paperAPI?.listDocs().then(setDocs).catch(() => setDocs([]));
   }
 
-  // 열린 문서를 다시 읽어 새 블록 이어붙임(스크롤은 안정 key 로 유지)
   async function reloadOpenDoc(docId: string) {
     const d = (await window.paperAPI.loadDoc(docId)) as PaperDocument;
     setDoc(d);
@@ -49,7 +55,6 @@ export function App() {
     setLoading(true);
     try {
       const d = (await window.paperAPI.loadDoc(docId)) as PaperDocument;
-      await loadDocState(docId);
       openDocId.current = docId;
       setDoc(d);
     } finally {
@@ -57,76 +62,99 @@ export function App() {
     }
   }
 
-  function close() {
-    openDocId.current = null;
-    setDoc(null);
+  function showToast(msg: string) {
+    setToast(msg);
+    setTimeout(() => setToast(null), 4000);
+  }
+
+  // 드래그-드롭 PDF → 추출 시작
+  async function onDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragging(false);
+    const files = Array.from(e.dataTransfer.files).filter((f) => /\.pdf$/i.test(f.name));
+    if (!files.length) return showToast("PDF 파일만 추출할 수 있습니다.");
+    for (const f of files) {
+      const path = window.paperAPI.pathForFile(f);
+      const res = await window.paperAPI.extractPdf(path);
+      if (res.error) showToast(res.error);
+      else showToast(`추출 시작: ${f.name} — 곧 라이브러리에 나타납니다.`);
+    }
   }
 
   const openSummary = docs.find((d) => d.doc_id === doc?.doc_id);
+  const cssVars = toCssVars(typography) as CSSProperties;
 
-  if (doc) {
-    const extracting = openSummary?.state === "extracting";
-    return (
-      <div className="reader-root" data-theme={typography.theme}>
-        <header className="reader-bar">
-          <button className="back-btn" onClick={close}>← 라이브러리</button>
-          <span className="reader-title">{doc.title ?? doc.doc_id}</span>
-          {extracting && (
-            <span className="extract-badge">
-              추출 중 {openSummary?.pages_done}/{openSummary?.page_count}p
-            </span>
-          )}
-          <button className="bar-btn" onClick={() => setPanelOpen((v) => !v)}>
-            {panelOpen ? "설정 닫기" : "Aa 읽기 설정"}
-          </button>
-        </header>
-        <div className="reader-body">
-          <main className="reader-scroll">
-            <article className="reader-content" style={toCssVars(typography) as CSSProperties}>
-              {doc.blocks.map((b) => (
-                <BlockRenderer key={b.id} block={b} docId={doc.doc_id} />
-              ))}
-              {extracting && (
-                <p className="extract-more">⏳ 남은 페이지 추출 중… 완료되는 대로 이어집니다.</p>
-              )}
-              {doc.blocks.length === 0 && !extracting && (
-                <p className="empty">표시할 내용이 없습니다.</p>
-              )}
-            </article>
-          </main>
-          {panelOpen && <TypographyPanel onClose={() => setPanelOpen(false)} />}
-        </div>
-        <SelectionTranslate containerSel=".reader-content" />
-      </div>
-    );
-  }
+  const dropProps = {
+    onDragOver: (e: React.DragEvent) => { e.preventDefault(); setDragging(true); },
+    onDragLeave: (e: React.DragEvent) => { if (e.currentTarget === e.target) setDragging(false); },
+    onDrop,
+  };
 
   return (
-    <div className="library-root" data-theme="light">
-      <h1>Paper Reader</h1>
-      <p className="hint">
-        추출된 문서가 여기 표시됩니다. 새 논문은 <code>pipeline/extract.py</code> 로 추출하세요.
-      </p>
-      <button className="link-btn" onClick={refreshDocs}>새로고침</button>
-      {loading && <p>여는 중…</p>}
-      {docs.length === 0 ? (
-        <p className="empty">아직 추출된 문서가 없습니다.</p>
+    <>
+      {doc ? (
+        <div className="reader-root" {...dropProps}>
+          <header className="reader-bar">
+            <button className="back-btn" onClick={() => { openDocId.current = null; setDoc(null); }}>← 라이브러리</button>
+            <span className="reader-title">{doc.title ?? doc.doc_id}</span>
+            {openSummary?.state === "extracting" && (
+              <span className="extract-badge">추출 중 {openSummary.pages_done}/{openSummary.page_count}p</span>
+            )}
+            <button className="icon-action reader-gear" onClick={() => setSettingsOpen(true)} title="읽기 설정" aria-label="설정">{GEAR}</button>
+          </header>
+          <div className="reader-body">
+            <main className="reader-scroll">
+              <article className="reader-content" style={cssVars}>
+                {doc.blocks.map((b) => (
+                  <BlockRenderer key={b.id} block={b} docId={doc.doc_id} />
+                ))}
+                {openSummary?.state === "extracting" && (
+                  <p className="extract-more">⏳ 남은 페이지 추출 중… 완료되는 대로 이어집니다.</p>
+                )}
+              </article>
+            </main>
+          </div>
+          <SelectionTranslate containerSel=".reader-content" />
+        </div>
       ) : (
-        <ul className="doc-list">
-          {docs.map((d) => (
-            <li key={d.doc_id}>
-              <button onClick={() => open(d.doc_id)}>
-                <span className="doc-title">{d.title ?? d.doc_id}</span>
-                <span className="doc-meta">
-                  {d.state === "extracting"
-                    ? `추출 중 ${d.pages_done}/${d.page_count}p`
-                    : `${d.page_count}p`}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
+        <div className="library-root" {...dropProps}>
+          <header className="library-bar">
+            <h1>Paper Reader</h1>
+            <div className="bar-actions">
+              <button className="icon-action" onClick={refreshDocs} title="새로고침" aria-label="새로고침">↻</button>
+              <button className="icon-action" onClick={() => setSettingsOpen(true)} title="읽기 설정" aria-label="설정">{GEAR}</button>
+            </div>
+          </header>
+          <p className="hint">
+            PDF를 이 창에 끌어다 놓으면 추출이 시작됩니다. (또는 <code>pipeline/extract.py</code>)
+          </p>
+          {loading && <p>여는 중…</p>}
+          {docs.length === 0 ? (
+            <p className="empty">아직 추출된 문서가 없습니다. PDF를 끌어다 놓아 보세요.</p>
+          ) : (
+            <ul className="doc-list">
+              {docs.map((d) => (
+                <li key={d.doc_id}>
+                  <button onClick={() => open(d.doc_id)}>
+                    <span className="doc-title">{d.title ?? d.doc_id}</span>
+                    <span className="doc-meta">
+                      {d.state === "extracting" ? `추출 중 ${d.pages_done}/${d.page_count}p` : `${d.page_count}p`}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
-    </div>
+
+      {dragging && (
+        <div className="drop-overlay" {...dropProps}>
+          <div className="drop-hint">📄 여기에 PDF를 놓으면 추출을 시작합니다</div>
+        </div>
+      )}
+      {toast && <div className="toast">{toast}</div>}
+      {settingsOpen && <TypographyPanel onClose={() => setSettingsOpen(false)} />}
+    </>
   );
 }

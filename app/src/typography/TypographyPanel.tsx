@@ -1,4 +1,5 @@
-// 타이포그래피 설정 패널 (명세 §6.2, §6.3). 모든 값 실시간 → CSS 변수.
+// 타이포그래피 설정 패널 (명세 §6.2, §6.3). 모든 값 실시간 → CSS 변수. 모달로 표시.
+import { useEffect } from "react";
 import { useStore, fontFamilyName } from "../store/useStore";
 import {
   FONT_OPTIONS,
@@ -43,6 +44,14 @@ export function TypographyPanel({ onClose }: { onClose: () => void }) {
   const setTranslationConfig = useStore((s) => s.setTranslationConfig);
   const apply = (patch: Partial<Typography>) => set(patch);
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   const fontChoices = [
     ...FONT_OPTIONS,
     ...userFonts.map((f) => {
@@ -52,7 +61,8 @@ export function TypographyPanel({ onClose }: { onClose: () => void }) {
   ];
 
   return (
-    <aside className="typo-panel">
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <aside className="typo-panel modal" onMouseDown={(e) => e.stopPropagation()}>
       <div className="typo-head">
         <strong>읽기 설정</strong>
         <button className="icon-btn" onClick={onClose} aria-label="닫기">×</button>
@@ -153,13 +163,12 @@ export function TypographyPanel({ onClose }: { onClose: () => void }) {
       </div>
 
       <div className="typo-section typo-actions">
-        <button className="link-btn" onClick={() => useStore.getState().resetToGlobalDefault()}>
+        <button className="link-btn" onClick={() => useStore.getState().resetToDefault()}>
           기본값으로 되돌리기
         </button>
-        <button className="link-btn" onClick={() => useStore.getState().saveAsGlobalDefault()}>
-          전역 기본값으로 저장
-        </button>
+        <span className="typo-note">설정은 자동 저장됩니다.</span>
       </div>
-    </aside>
+      </aside>
+    </div>
   );
 }

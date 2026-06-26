@@ -4,9 +4,19 @@ import { app, BrowserWindow, ipcMain, protocol, dialog, net } from "electron";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { pathToFileURL } from "node:url";
-import { watch } from "node:fs";
+import { watch, existsSync } from "node:fs";
+import { spawn } from "node:child_process";
 
 const isDev = !app.isPackaged;
+
+// 파이프라인(Python) 위치 — 드래그-드롭 추출에 사용. dev: repo/pipeline.
+// 환경변수로 재정의 가능(패키징 시 별도 설정).
+function pipelineDir(): string {
+  return process.env.PAPER_PIPELINE_DIR || path.resolve(__dirname, "../../pipeline");
+}
+function venvPython(): string {
+  return process.env.PAPER_PYTHON || path.join(pipelineDir(), ".venv", "bin", "python");
+}
 
 // paper:// 를 표준·보안 스킴으로 등록 (net.fetch/이미지 로딩 허용). app ready 이전 필수.
 protocol.registerSchemesAsPrivileged([
@@ -207,6 +217,32 @@ ipcMain.handle("translate:text", async (_e, text: string) => {
     };
     const out = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
     return { translation: out.trim() };
+  } catch (err) {
+    return { error: String(err) };
+  }
+});
+
+// ── PDF 드래그-드롭 추출: extract.py 를 자식 프로세스로 실행 ──────────────
+// 추출은 document.json/status.json 을 점진 기록 → 와처가 라이브러리를 자동 갱신.
+ipcMain.handle("pipeline:extract", async (_e, pdfPath: string) => {
+  const py = venvPython();
+  const script = path.join(pipelineDir(), "extract.py");
+  if (!existsSync(py)) {
+    return { error: `Python 환경 없음: ${py}\n(pipeline/.venv 설치 필요)` };
+  }
+  if (!existsSync(script)) {
+    return { error: `extract.py 없음: ${script}` };
+  }
+  if (!/\.pdf$/i.test(pdfPath)) {
+    return { error: "PDF 파일만 추출할 수 있습니다." };
+  }
+  try {
+    const child = spawn(py, [script, pdfPath], { cwd: pipelineDir(), stdio: "ignore" });
+    let spawnErr: string | null = null;
+    child.on("error", (e) => (spawnErr = String(e)));
+    // 비동기 시작 — 진행/완료는 status.json 와처가 라이브러리에 반영.
+    await new Promise((r) => setTimeout(r, 150));
+    return spawnErr ? { error: spawnErr } : { started: true };
   } catch (err) {
     return { error: String(err) };
   }

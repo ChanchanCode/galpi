@@ -1,5 +1,5 @@
 // Preload — 렌더러에 안전한 API 표면만 노출 (contextIsolation).
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 export type DocSummary = {
   doc_id: string;
@@ -33,6 +33,10 @@ const api = {
       ipcRenderer.removeListener("docs:changed", handler);
     };
   },
+  // 드래그-드롭 PDF: File → 로컬 경로 (Electron webUtils), 그 경로로 추출 시작.
+  pathForFile: (file: File): string => webUtils.getPathForFile(file),
+  extractPdf: (pdfPath: string): Promise<{ started?: boolean; error?: string }> =>
+    ipcRenderer.invoke("pipeline:extract", pdfPath),
 };
 
 contextBridge.exposeInMainWorld("paperAPI", api);
