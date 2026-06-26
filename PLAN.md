@@ -59,6 +59,26 @@
   - [x] 라이브러리 새로고침 버튼(앞서의 UX 갭 해소)
   - 검증: 다크 전환 즉시 반영 → state.json 저장 → 재실행 후 복원 확인 ✅
 
+- [x] **추가 A — 페이지 단위 스트리밍 읽기** ✅ (사용자 요청, Phase 4 전 추가)
+  - [x] extract.py 청크 추출(`--chunk`, 기본 6): 전체 래스터화 먼저 → 청크별
+        MinerU(`-s/-e`) → page_idx 오프셋 보정(§14-2 검증: 범위추출시 0리셋) →
+        document.json 원자적 점진 갱신 + status.json(진행률)
+  - [x] main 프로세스 fs.watch → 'docs:changed' → 라이브러리 자동 갱신 +
+        열린 문서 라이브 이어붙임. 추출 중 문서도 즉시 열어 읽기 가능.
+  - [x] UI: 라이브러리/리더에 "추출 중 n/N p" 배지
+  - 검증: 추출 도중 문서 열어 부분 읽기 + 8→16p 자동 갱신 확인 ✅
+  - ⚠️ 트레이드오프: 청크마다 MinerU 모델 재로드 → 전체 시간 2~3배 증가.
+    완화책: --chunk 키워 오버헤드↓(스트리밍 입자↑), --chunk 0=단일추출(최속),
+    차후 persistent mineru-api 서버로 근본 개선 가능.
+
+- [x] **추가 B — 선택 텍스트 로컬 번역** ✅ (사용자 요청)
+  - [x] translate_server.py: NLLB-200-distilled-600M, FastAPI localhost 전용
+        (§1.2 보안: 논문 외부 전송 없음). 문장 분할 배치 번역. 모델 지연 로드.
+  - [x] main: 번역 서버 lazy spawn + health 폴링 + translate:text 프록시
+  - [x] SelectionTranslate: 드래그 선택 → "번역(T)" 플로팅 버튼/단축키 → 팝오버
+  - 검증: 추출중 문서에서 문장 선택→번역→한국어 결과 표시(완전 오프라인) ✅
+  - 메모: opus-mt-tc-big-en-ko 는 출력 깨져 폐기, NLLB(~2.4GB)로 확정.
+
 - [ ] **Phase 4 — 원본 대조 Source Peek (§9)**  ← 좌표 정합 까다로움
   - [ ] 디버그 오버레이 모드 먼저 → 좌표 변환식 캘리브레이션(y 뒤집기, §9.3)
   - [ ] 검사 모드(Option+클릭) → bbox crop 팝오버
@@ -102,5 +122,8 @@
 - 2026-06-26: Phase 3 완료. 타이포 설정 패널·폰트 커스터마이징·문서별 영속화 구현.
   다크 테마 적용 시 본문 영역 배경 누락 버그 수정(reader-scroll에 bg/fg 명시).
   실논문에서 즉시 반영 + 재실행 복원 검증. **Phase 0~3 완료.**
+- 2026-06-26: GitHub 비공개 레포 생성·푸시 → github.com/ChanchanCode/galpi
+- 2026-06-26: 추가 A(페이지 스트리밍)·B(로컬 번역) 구현·검증. 추출 중 논문 부분 읽기 +
+  선택 번역 모두 실제 동작 확인. MinerU 청크 재로드로 추출 시간 2~3배 트레이드오프 기록.
 - **다음**: Phase 4(원본 대조 Source Peek: Option+클릭 → bbox crop 팝오버, 디버그 오버레이).
   bbox는 이미 PDF포인트로 저장돼 있어 좌표 변환만 남음(top-left 원점, y뒤집기 없음).

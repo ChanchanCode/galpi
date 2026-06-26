@@ -60,6 +60,9 @@ def run_mineru(
     workdir: Path,
     backend: str = "auto",
     effort: str = "high",
+    start: int | None = None,
+    end: int | None = None,
+    out_subdir: str = "mineru",
 ) -> Path:
     """MinerU CLI 실행. 출력 폴더(작업 폴더 내 mineru 산출물 루트)를 반환.
 
@@ -84,12 +87,18 @@ def run_mineru(
         is_apple_silicon = platform.system() == "Darwin" and platform.machine() == "arm64"
         backend = "hybrid-engine" if is_apple_silicon else "pipeline"
 
-    out_dir = workdir / "mineru"
+    out_dir = workdir / out_subdir
     out_dir.mkdir(parents=True, exist_ok=True)
 
     cmd = [_mineru_bin(), "-p", str(pdf_path), "-o", str(out_dir), "-b", backend]
     if backend.startswith("hybrid"):
         cmd += ["--effort", effort]  # pipeline 백엔드엔 --effort 없음
+    # 페이지 범위(0-indexed, -e inclusive). 청크 추출에 사용.
+    # ⚠️(§14-2 검증) 범위 추출 시 출력 page_idx 는 0부터 리셋됨 → 호출측에서 start 오프셋 보정.
+    if start is not None:
+        cmd += ["-s", str(start)]
+    if end is not None:
+        cmd += ["-e", str(end)]
     print(f"[mineru] running: {' '.join(cmd)}")
     subprocess.run(cmd, check=True)
     return out_dir
@@ -170,10 +179,12 @@ BBOX_NORM = 1000.0  # content_list bbox 정규화 척도 (캘리브레이션으�
 _DISCARD_TYPES = {"header", "page_number", "aside_text"}
 
 
-def parse(mineru_out: Path) -> list[RawBlock]:
+def parse(mineru_out: Path, page_offset: int = 0) -> list[RawBlock]:
     """MinerU content_list.json → RawBlock 목록 (읽기 순서 보존).
 
     bbox 는 1000 정규화 좌표 그대로 둔다(build_document 가 PDF포인트로 변환).
+    page_offset: 청크 추출 시 chunk 시작 페이지(0-indexed). 출력 page_idx 가
+    0부터 리셋되므로 여기에 더해 원본 페이지로 복원한다(§14-2 검증).
     """
     files = find_output_files(mineru_out)
     if "content_list" not in files:
@@ -184,6 +195,7 @@ def parse(mineru_out: Path) -> list[RawBlock]:
     for item in content:
         rb = _content_item_to_raw(item)
         if rb is not None:
+            rb.page_idx += page_offset
             blocks.append(rb)
     return blocks
 

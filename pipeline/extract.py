@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import shutil
 import sys
 from pathlib import Path
@@ -67,6 +68,68 @@ def remap_asset_paths(document: dict) -> None:
             b["image"] = f"assets/{Path(img).name}"
 
 
+def write_status(workdir: Path, state: str, pages_done: int, page_count: int) -> None:
+    """추출 진행 상태를 status.json 으로 (뷰어가 '추출 중 n/N' 표시·라이브 갱신).
+
+    state: "extracting" | "done" | "error"
+    """
+    import os
+
+    payload = {"state": state, "pages_done": pages_done, "page_count": page_count}
+    tmp = workdir / "status.json.tmp"
+    tmp.write_text(json.dumps(payload, ensure_ascii=False))
+    os.replace(tmp, workdir / "status.json")
+
+
+def run_streaming(args, pdf_path: Path, doc_id: str, workdir: Path) -> int:
+    """페이지 단위 스트리밍 추출 (명세 사용자 요구).
+
+    1) 전체 페이지를 먼저 래스터화(빠름) → 페이지 이미지·좌표계 즉시 확보.
+    2) document.json 을 pages 만 채워 먼저 쓰고 status=extracting.
+    3) chunk 페이지씩 MinerU 추출 → page_idx 오프셋 보정 → blocks 누적 →
+       매 청크마다 document.json·status 원자적 갱신(뷰어가 라이브로 읽어 이어붙임).
+    """
+    # 원본 사본 (대조용, §4.1) — 먼저 복사해 Source Peek 도 바로 가능
+    shutil.copy2(pdf_path, workdir / "source.pdf")
+
+    # 1) 전체 래스터화
+    pages = rasterize_pdf(pdf_path, workdir, dpi=args.dpi)
+    n = len(pages)
+    print(f"[extract] rasterized {n} pages @ {args.dpi}dpi")
+
+    # 2) pages 만 채운 document.json 초기 기록
+    document = build_document.build_document(doc_id, [], pages)
+    build_document.write_document(document, workdir)
+    write_status(workdir, "extracting", 0, n)
+
+    # 3) 청크 추출 (chunk<=0 이면 단일 청크=전체)
+    chunk = args.chunk if args.chunk and args.chunk > 0 else n
+    all_raw = []
+    try:
+        for ci, s in enumerate(range(0, n, chunk)):
+            e = min(s + chunk, n) - 1  # -e inclusive, 0-indexed
+            sub = f"mineru/chunk-{s:03d}-{e:03d}"
+            mineru_out = mineru_adapter.run_mineru(
+                pdf_path, workdir, backend=args.backend, effort=args.effort,
+                start=s, end=e, out_subdir=sub,
+            )
+            all_raw.extend(mineru_adapter.parse(mineru_out, page_offset=s))
+            collect_assets(mineru_out, workdir)
+            document = build_document.build_document(doc_id, all_raw, pages)
+            remap_asset_paths(document)
+            build_document.write_document(document, workdir)
+            write_status(workdir, "extracting", e + 1, n)
+            print(f"[extract] chunk {ci+1}: pages {s+1}-{e+1}/{n}, blocks={len(all_raw)}")
+    except Exception:
+        write_status(workdir, "error", 0, n)
+        raise
+
+    build_document.validate_and_log(document)
+    write_status(workdir, "done", n, n)
+    print(f"[extract] done → {workdir / 'document.json'}")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Paper Reflow Reader 추출 파이프라인")
     ap.add_argument("pdf", type=Path, help="입력 PDF 경로")
@@ -77,6 +140,8 @@ def main() -> int:
                     help="MinerU 백엔드 (auto|hybrid-engine|vlm-engine|pipeline)")
     ap.add_argument("--effort", default="high", choices=["medium", "high"],
                     help="hybrid 백엔드 정밀도 (기본 high=품질 우선)")
+    ap.add_argument("--chunk", type=int, default=6,
+                    help="페이지 스트리밍 청크 크기(기본 6). 0이면 전체를 한 번에.")
     ap.add_argument("--inspect", action="store_true",
                     help="MinerU 출력 구조만 덤프하고 종료 (§14-2 캘리브레이션)")
     ap.add_argument("--skip-mineru", action="store_true",
@@ -94,40 +159,41 @@ def main() -> int:
     workdir.mkdir(parents=True, exist_ok=True)
     print(f"[extract] doc_id={doc_id}\n[extract] workdir={workdir}")
 
-    # 1) MinerU 실행 (또는 기존 출력 재사용)
-    mineru_out = workdir / "mineru"
-    if args.skip_mineru:
-        if not mineru_out.exists():
-            print(f"기존 MinerU 출력 없음: {mineru_out}", file=sys.stderr)
-            return 1
-        print(f"[extract] MinerU 재사용: {mineru_out}")
-    else:
+    # --inspect / --skip-mineru: 단일 출력(레거시·디버그 경로) 사용
+    if args.inspect:
         mineru_out = mineru_adapter.run_mineru(
             pdf_path, workdir, backend=args.backend, effort=args.effort
         )
-
-    if args.inspect:
         mineru_adapter.inspect_output(mineru_out)
         return 0
 
-    # 2) 페이지 래스터화 + 좌표계 기록 (§9.3)
-    pages = rasterize_pdf(pdf_path, workdir, dpi=args.dpi)
-    print(f"[extract] rasterized {len(pages)} pages @ {args.dpi}dpi")
+    if args.skip_mineru:
+        # 기존 mineru 출력(단일 또는 청크들) 재사용해 파싱·빌드만 재실행
+        pages = rasterize_pdf(pdf_path, workdir, dpi=args.dpi)
+        all_raw = []
+        single = workdir / "mineru"
+        chunk_dirs = sorted((workdir / "mineru").glob("chunk-*")) if single.exists() else []
+        if chunk_dirs:
+            for cd in chunk_dirs:
+                s = int(cd.name.split("-")[1])  # chunk-<s>-<e>
+                all_raw.extend(mineru_adapter.parse(cd, page_offset=s))
+                collect_assets(cd, workdir)
+        elif single.exists():
+            all_raw = mineru_adapter.parse(single)
+            collect_assets(single, workdir)
+        else:
+            print(f"기존 MinerU 출력 없음: {single}", file=sys.stderr)
+            return 1
+        document = build_document.build_document(doc_id, all_raw, pages)
+        remap_asset_paths(document)
+        build_document.validate_and_log(document)
+        build_document.write_document(document, workdir)
+        write_status(workdir, "done", len(pages), len(pages))
+        print(f"[extract] (skip-mineru) wrote {workdir / 'document.json'}")
+        return 0
 
-    # 3) MinerU 출력 파싱 → 중간 포맷 빌드 (§5)
-    raw_blocks = mineru_adapter.parse(mineru_out)
-    collect_assets(mineru_out, workdir)
-    document = build_document.build_document(doc_id, raw_blocks, pages)
-    remap_asset_paths(document)
-
-    # 원본 사본 (대조용, §4.1)
-    shutil.copy2(pdf_path, workdir / "source.pdf")
-
-    # 4) 검증 로그 + 저장 (§4.2-4)
-    build_document.validate_and_log(document)
-    out = build_document.write_document(document, workdir)
-    print(f"[extract] wrote {out}")
-    return 0
+    # 기본: 페이지 스트리밍 추출
+    return run_streaming(args, pdf_path, doc_id, workdir)
 
 
 if __name__ == "__main__":

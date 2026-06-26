@@ -160,6 +160,11 @@ def validate_and_log(document: dict) -> None:
 
 
 def write_document(document: dict, workdir: Path) -> Path:
+    """document.json 원자적 쓰기 (뷰어가 반쯤 쓰인 파일을 읽지 않도록)."""
+    import os
+
     out = workdir / "document.json"
-    out.write_text(json.dumps(document, ensure_ascii=False, indent=2))
+    tmp = workdir / "document.json.tmp"
+    tmp.write_text(json.dumps(document, ensure_ascii=False, indent=2))
+    os.replace(tmp, out)  # 원자적 교체
     return out
