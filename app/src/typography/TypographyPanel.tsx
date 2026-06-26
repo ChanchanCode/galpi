@@ -39,6 +39,8 @@ export function TypographyPanel({ onClose }: { onClose: () => void }) {
   const t = useStore((s) => s.typography);
   const userFonts = useStore((s) => s.userFonts);
   const set = useStore((s) => s.setTypography);
+  const translation = useStore((s) => s.translation);
+  const setTranslationConfig = useStore((s) => s.setTranslationConfig);
   const apply = (patch: Partial<Typography>) => set(patch);
 
   const fontChoices = [
@@ -132,6 +134,22 @@ export function TypographyPanel({ onClose }: { onClose: () => void }) {
             </button>
           ))}
         </div>
+      </div>
+
+      <div className="typo-section">
+        <span className="ctrl-label">번역 (선택 후 T / 우클릭)</span>
+        <label className="ctrl">
+          <span className="ctrl-label">Gemini API 키</span>
+          <input
+            type="password"
+            placeholder="AIza… (aistudio.google.com 무료)"
+            value={translation.apiKey}
+            onChange={(e) => setTranslationConfig({ apiKey: e.target.value })}
+          />
+        </label>
+        <p className="typo-note">
+          선택한 문장이 Google로 전송됩니다. 미공개 논문은 키를 비워 두세요(번역 비활성).
+        </p>
       </div>
 
       <div className="typo-section typo-actions">

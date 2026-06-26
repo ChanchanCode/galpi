@@ -4,19 +4,9 @@ import { app, BrowserWindow, ipcMain, protocol, dialog, net } from "electron";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { pathToFileURL } from "node:url";
-import { spawn, type ChildProcess } from "node:child_process";
 import { watch } from "node:fs";
 
 const isDev = !app.isPackaged;
-
-// 파이프라인(Python) 위치 — 추출/번역 서버 공유. dev: repo/pipeline.
-// 환경변수로 재정의 가능(패키징 시 별도 설정).
-function pipelineDir(): string {
-  return process.env.PAPER_PIPELINE_DIR || path.resolve(__dirname, "../../pipeline");
-}
-function venvPython(): string {
-  return process.env.PAPER_PYTHON || path.join(pipelineDir(), ".venv", "bin", "python");
-}
 
 // paper:// 를 표준·보안 스킴으로 등록 (net.fetch/이미지 로딩 허용). app ready 이전 필수.
 protocol.registerSchemesAsPrivileged([
@@ -176,51 +166,47 @@ async function startDocsWatcher() {
   }
 }
 
-// ── 로컬 번역 서버(NLLB) 프록시 (명세 §1.2 보안: 로컬 전용) ──────────────
-const TRANSLATE_PORT = 8765;
-let translateProc: ChildProcess | null = null;
-
-async function ensureTranslateServer(): Promise<boolean> {
-  // 이미 떠 있으면 health 로 확인
-  try {
-    const r = await fetch(`http://127.0.0.1:${TRANSLATE_PORT}/health`);
-    if (r.ok) return true;
-  } catch {
-    /* 아직 안 떠 있음 */
-  }
-  if (!translateProc) {
-    const py = venvPython();
-    const script = path.join(pipelineDir(), "translate_server.py");
-    translateProc = spawn(py, [script, "--port", String(TRANSLATE_PORT)], {
-      cwd: pipelineDir(),
-      stdio: "ignore",
-    });
-    translateProc.on("exit", () => (translateProc = null));
-  }
-  // health 폴링(모델 지연 로드는 첫 요청에서 발생하므로 서버 기동만 대기)
-  for (let i = 0; i < 60; i++) {
-    try {
-      const r = await fetch(`http://127.0.0.1:${TRANSLATE_PORT}/health`);
-      if (r.ok) return true;
-    } catch {
-      /* 재시도 */
-    }
-    await new Promise((res) => setTimeout(res, 500));
-  }
-  return false;
+// ── 번역: Gemini API (클라우드, 사용자 본인 무료 키) ───────────────────────
+// 키는 전역 settings.json 의 translation.apiKey 에 로컬 저장(앱이 키를 생성/전송하지 않음).
+// ⚠️ 선택 텍스트가 Google 로 전송됨 — 미공개 논문이면 주의(설정에서 끄거나 키 미입력).
+function settingsPath(): string {
+  return path.join(app.getPath("appData"), "PaperReader", "settings.json");
 }
 
-ipcMain.handle("translate:text", async (_e, text: string, src = "en", tgt = "ko") => {
-  const up = await ensureTranslateServer();
-  if (!up) return { error: "번역 서버를 시작할 수 없습니다. pipeline/.venv 설치를 확인하세요." };
+const TRANSLATE_PROMPT =
+  "You are a translator for an English→Korean reader of finance/economics academic papers. " +
+  "Translate the user's selected text into natural, fluent Korean, preserving technical terms with their standard Korean equivalents. " +
+  "If the selection is a single word or short phrase, briefly list its main senses relevant to this academic context. " +
+  "Respond with ONLY the Korean result — no preamble, no quotes.\n\nText:\n";
+
+ipcMain.handle("translate:text", async (_e, text: string) => {
+  const settings = (await readJson(settingsPath())) as
+    | { translation?: { apiKey?: string; model?: string } }
+    | null;
+  const apiKey = settings?.translation?.apiKey?.trim();
+  const model = settings?.translation?.model?.trim() || "gemini-2.0-flash";
+  if (!apiKey) {
+    return { error: "읽기 설정 → 번역에서 Gemini API 키를 입력하세요 (aistudio.google.com 무료 발급)." };
+  }
   try {
-    const r = await fetch(`http://127.0.0.1:${TRANSLATE_PORT}/translate`, {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    const r = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, src, tgt }),
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: TRANSLATE_PROMPT + text }] }],
+        generationConfig: { temperature: 0.2 },
+      }),
     });
-    const data = (await r.json()) as { translation?: string };
-    return { translation: data.translation ?? "" };
+    if (!r.ok) {
+      const body = await r.text();
+      return { error: `Gemini API 오류 ${r.status}: ${body.slice(0, 160)}` };
+    }
+    const data = (await r.json()) as {
+      candidates?: { content?: { parts?: { text?: string }[] } }[];
+    };
+    const out = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
+    return { translation: out.trim() };
   } catch (err) {
     return { error: String(err) };
   }
@@ -233,10 +219,6 @@ app.whenReady().then(() => {
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
-});
-
-app.on("before-quit", () => {
-  if (translateProc) translateProc.kill();
 });
 
 app.on("window-all-closed", () => {

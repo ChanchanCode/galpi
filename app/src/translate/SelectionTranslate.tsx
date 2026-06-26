@@ -103,12 +103,12 @@ export function SelectionTranslate({ containerSel }: { containerSel: string }) {
         <div className="sel-src">{anchor.text}</div>
         <div className="sel-divider" />
         {loading ? (
-          <div className="sel-loading">번역 중… (첫 실행은 모델 로딩으로 느릴 수 있어요)</div>
+          <div className="sel-loading">번역 중…</div>
         ) : (
           <div className="sel-result">{result}</div>
         )}
         <div className="sel-foot">
-          <span className="sel-engine">로컬 NLLB · 오프라인</span>
+          <span className="sel-engine">Gemini · 클라우드</span>
           <button className="sel-close" onClick={close}>닫기</button>
         </div>
       </div>

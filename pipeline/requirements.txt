@@ -5,9 +5,4 @@
 mineru[all]        # 추출 엔진. Apple Silicon에서 MLX 백엔드 가속.
 PyMuPDF            # fitz — 페이지 고DPI 래스터화 + 좌표 계산
 
-# 로컬 번역 서버(translate_server.py)용 — 아래는 보통 mineru[all] 이 함께 설치하지만
-# 명시해 둔다. NLLB-200-distilled-600M 모델은 첫 실행 시 자동 다운로드(~2.4GB).
-transformers
-sentencepiece      # NLLB 토크나이저
-fastapi
-uvicorn
+# 번역은 뷰어가 Gemini API(클라우드)로 처리 — 로컬 의존성 없음(§ app 설정의 API 키).

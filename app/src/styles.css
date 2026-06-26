@@ -74,7 +74,8 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-family);
 .ctrl-label { display: flex; justify-content: space-between; color: var(--muted); }
 .ctrl-label em { font-style: normal; color: var(--fg); }
 .ctrl input[type="range"] { width: 100%; accent-color: var(--accent); }
-.ctrl select { padding: 5px 8px; border: 1px solid var(--rule); border-radius: 8px; background: var(--bg); color: var(--fg); }
+.ctrl select, .ctrl input[type="password"], .ctrl input[type="text"] { padding: 5px 8px; border: 1px solid var(--rule); border-radius: 8px; background: var(--bg); color: var(--fg); width: 100%; }
+.typo-note { font-size: 0.72rem; color: var(--muted); margin: 0; line-height: 1.4; }
 .seg { display: flex; gap: 6px; flex-wrap: wrap; }
 .seg-btn { flex: 1; min-width: 60px; padding: 6px 8px; border: 1px solid var(--rule); border-radius: 8px; background: transparent; color: var(--fg); cursor: pointer; font-size: 0.8rem; }
 .seg-btn.on { border-color: var(--accent); color: var(--accent); }

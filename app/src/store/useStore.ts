@@ -8,10 +8,18 @@ import {
 } from "./typography";
 import type { UserFont } from "../../electron/preload";
 
+export interface TranslationConfig {
+  apiKey: string;
+  model: string;
+}
+
 interface GlobalSettings {
   typography: Typography;
   fonts: UserFont[];
+  translation?: TranslationConfig;
 }
+
+const DEFAULT_TRANSLATION: TranslationConfig = { apiKey: "", model: "gemini-2.0-flash" };
 
 interface DocState {
   typography?: Partial<Typography>;
@@ -24,6 +32,7 @@ interface Store {
   typography: Typography;
   userFonts: UserFont[];
   globalDefault: Typography;
+  translation: TranslationConfig;
 
   initSession: () => Promise<void>;
   loadDocState: (docId: string) => Promise<void>;
@@ -31,6 +40,7 @@ interface Store {
   resetToGlobalDefault: () => void;
   saveAsGlobalDefault: () => Promise<void>;
   addUserFonts: () => Promise<void>;
+  setTranslationConfig: (patch: Partial<TranslationConfig>) => Promise<void>;
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -40,14 +50,16 @@ export const useStore = create<Store>((set, get) => ({
   typography: DEFAULT_TYPOGRAPHY,
   userFonts: [],
   globalDefault: DEFAULT_TYPOGRAPHY,
+  translation: DEFAULT_TRANSLATION,
 
-  // 앱 시작 시 전역 설정 로드 (기본 타이포 + 사용자 폰트)
+  // 앱 시작 시 전역 설정 로드 (기본 타이포 + 사용자 폰트 + 번역 설정)
   initSession: async () => {
     const g = (await window.paperAPI.loadSettings()) as GlobalSettings | null;
     if (g) {
       set({
         globalDefault: { ...DEFAULT_TYPOGRAPHY, ...g.typography },
         userFonts: g.fonts ?? [],
+        translation: { ...DEFAULT_TRANSLATION, ...(g.translation ?? {}) },
       });
     }
   },
@@ -81,9 +93,8 @@ export const useStore = create<Store>((set, get) => ({
 
   // 현재 설정을 전역 기본값으로 (새 문서에 적용)
   saveAsGlobalDefault: async () => {
-    const { typography, userFonts } = get();
-    set({ globalDefault: { ...typography } });
-    await window.paperAPI.saveSettings({ typography, fonts: userFonts });
+    set({ globalDefault: { ...get().typography } });
+    await persistSettings(get);
   },
 
   // 로컬 폰트 파일 추가 (§6.3) → @font-face 동적 등록 + 전역 보관
@@ -93,12 +104,25 @@ export const useStore = create<Store>((set, get) => ({
     const merged = dedupeFonts([...get().userFonts, ...picked]);
     set({ userFonts: merged });
     registerFonts(picked);
-    await window.paperAPI.saveSettings({
-      typography: get().globalDefault,
-      fonts: merged,
-    });
+    await persistSettings(get);
+  },
+
+  // 번역 설정(API 키/모델) 갱신 + 즉시 저장
+  setTranslationConfig: async (patch) => {
+    set({ translation: { ...get().translation, ...patch } });
+    await persistSettings(get);
   },
 }));
+
+// 전역 settings.json 을 한 곳에서 직렬화 — 부분 저장이 다른 키를 덮어쓰지 않게.
+async function persistSettings(get: () => Store): Promise<void> {
+  const { globalDefault, userFonts, translation } = get();
+  await window.paperAPI.saveSettings({
+    typography: globalDefault,
+    fonts: userFonts,
+    translation,
+  });
+}
 
 function dedupeFonts(fonts: UserFont[]): UserFont[] {
   const seen = new Set<string>();
