@@ -1,0 +1,24 @@
+# Python
+pipeline/.venv/
+__pycache__/
+*.pyc
+.mineru/
+
+# Node / Electron
+node_modules/
+app/dist/
+app/dist-electron/
+app/release/
+*.log
+
+# OS
+.DS_Store
+
+# Local-only Claude settings (personal permissions)
+.claude/settings.local.json
+
+# Test data / extracted output (큰 파일·산출물은 커밋 안 함)
+testdata/
+out/
+*.pdf
+!docs/**/*.pdf

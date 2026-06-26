@@ -1,0 +1,6 @@
+# 1단계 추출 파이프라인 의존성
+# 버전은 명세 메모대로 하드코딩하지 않고 설치 시점 최신 안정 버전 사용.
+# (필요 시 pip freeze로 lock 파일 별도 생성)
+
+mineru[all]        # 추출 엔진. Apple Silicon에서 MLX 백엔드 가속.
+PyMuPDF            # fitz — 페이지 고DPI 래스터화 + 좌표 계산
