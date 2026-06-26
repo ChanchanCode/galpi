@@ -4,9 +4,13 @@ import { contextBridge, ipcRenderer, webUtils } from "electron";
 export type DocSummary = {
   doc_id: string;
   title: string | null;
+  authors: string | null;
+  journal: string | null;
   page_count: number;
   state: "extracting" | "done" | "error";
   pages_done: number;
+  finished: boolean;
+  last_read_at: string | null;
 };
 export type UserFont = { name: string; dataUrl: string };
 
@@ -37,6 +41,9 @@ const api = {
   pathForFile: (file: File): string => webUtils.getPathForFile(file),
   extractPdf: (pdfPath: string): Promise<{ started?: boolean; error?: string }> =>
     ipcRenderer.invoke("pipeline:extract", pdfPath),
+  // 읽기 상태 부분 갱신 (완독 토글 / 최근 읽음 기록)
+  updateReading: (docId: string, patch: Record<string, unknown>): Promise<unknown> =>
+    ipcRenderer.invoke("reading:update", docId, patch),
 };
 
 contextBridge.exposeInMainWorld("paperAPI", api);

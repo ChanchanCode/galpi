@@ -85,6 +85,8 @@ def build_document(
     raw_blocks: list[RawBlock],
     pages: list[PageRaster],
     title: str | None = None,
+    authors: str | None = None,
+    journal: str | None = None,
 ) -> dict:
     """RawBlock + 페이지 정보 → document.json dict (§5)."""
     page_by_idx = {p.index - 1: p for p in pages}  # 0-indexed page_idx → PageRaster
@@ -130,6 +132,8 @@ def build_document(
     document = {
         "doc_id": doc_id,
         "title": title,
+        "authors": authors,   # "A, B, C" 또는 null
+        "journal": journal,   # "Journal of ..." 또는 null
         "source_pdf": "source.pdf",
         "page_count": len(pages),
         "pages": [p.to_page_dict() for p in pages],

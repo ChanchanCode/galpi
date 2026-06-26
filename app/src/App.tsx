@@ -10,6 +10,19 @@ import { toCssVars } from "./store/typography";
 
 const GEAR = "⚙";
 
+function relTime(iso: string | null): string | null {
+  if (!iso) return null;
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return "방금";
+  if (m < 60) return `${m}분 전`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}시간 전`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `${d}일 전`;
+  return new Date(iso).toLocaleDateString("ko-KR");
+}
+
 export function App() {
   const [docs, setDocs] = useState<DocSummary[]>([]);
   const [doc, setDoc] = useState<PaperDocument | null>(null);
@@ -57,9 +70,17 @@ export function App() {
       const d = (await window.paperAPI.loadDoc(docId)) as PaperDocument;
       openDocId.current = docId;
       setDoc(d);
+      // 최근 읽음 기록 (state.json 은 와처 밖이라 수동 갱신)
+      await window.paperAPI.updateReading(docId, { last_read_at: new Date().toISOString() });
+      refreshDocs();
     } finally {
       setLoading(false);
     }
+  }
+
+  async function toggleFinished(d: DocSummary) {
+    await window.paperAPI.updateReading(d.doc_id, { finished: !d.finished });
+    refreshDocs();
   }
 
   function showToast(msg: string) {
@@ -133,16 +154,34 @@ export function App() {
             <p className="empty">아직 추출된 문서가 없습니다. PDF를 끌어다 놓아 보세요.</p>
           ) : (
             <ul className="doc-list">
-              {docs.map((d) => (
-                <li key={d.doc_id}>
-                  <button onClick={() => open(d.doc_id)}>
-                    <span className="doc-title">{d.title ?? d.doc_id}</span>
-                    <span className="doc-meta">
-                      {d.state === "extracting" ? `추출 중 ${d.pages_done}/${d.page_count}p` : `${d.page_count}p`}
-                    </span>
-                  </button>
-                </li>
-              ))}
+              {docs.map((d) => {
+                const sub = [d.authors, d.journal].filter(Boolean).join(" · ");
+                const read = relTime(d.last_read_at);
+                return (
+                  <li key={d.doc_id}>
+                    <div className={`doc-card ${d.finished ? "is-finished" : ""}`} onClick={() => open(d.doc_id)}>
+                      <div className="doc-main">
+                        <span className="doc-title">{d.title ?? d.doc_id}</span>
+                        {sub && <span className="doc-sub">{sub}</span>}
+                        <span className="doc-foot">
+                          {d.state === "extracting"
+                            ? `추출 중 ${d.pages_done}/${d.page_count}p`
+                            : `${d.page_count}p`}
+                          {read && <span className="doc-dot">·</span>}
+                          {read && <span>{read} 읽음</span>}
+                        </span>
+                      </div>
+                      <button
+                        className={`finish-toggle ${d.finished ? "on" : ""}`}
+                        onClick={(e) => { e.stopPropagation(); toggleFinished(d); }}
+                        title={d.finished ? "완독 해제" : "완독으로 표시"}
+                      >
+                        {d.finished ? "✓ 완독" : "완독"}
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>

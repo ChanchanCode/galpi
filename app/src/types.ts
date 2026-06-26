@@ -38,6 +38,8 @@ export interface Block {
 export interface PaperDocument {
   doc_id: string;
   title: string | null;
+  authors?: string | null;
+  journal?: string | null;
   source_pdf: string;
   page_count: number;
   pages: PageInfo[];

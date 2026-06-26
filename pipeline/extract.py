@@ -25,6 +25,7 @@ from pathlib import Path
 
 import build_document
 import mineru_adapter
+import paper_meta
 from rasterize import rasterize_pdf
 
 
@@ -92,13 +93,17 @@ def run_streaming(args, pdf_path: Path, doc_id: str, workdir: Path) -> int:
     # 원본 사본 (대조용, §4.1) — 먼저 복사해 Source Peek 도 바로 가능
     shutil.copy2(pdf_path, workdir / "source.pdf")
 
+    # 0) 서지정보(제목/저자/저널) — PDF 메타데이터 + 1페이지 파싱
+    meta = paper_meta.extract_paper_meta(pdf_path)
+    print(f"[extract] meta: {meta}")
+
     # 1) 전체 래스터화
     pages = rasterize_pdf(pdf_path, workdir, dpi=args.dpi)
     n = len(pages)
     print(f"[extract] rasterized {n} pages @ {args.dpi}dpi")
 
     # 2) pages 만 채운 document.json 초기 기록
-    document = build_document.build_document(doc_id, [], pages)
+    document = build_document.build_document(doc_id, [], pages, **meta)
     build_document.write_document(document, workdir)
     write_status(workdir, "extracting", 0, n)
 
@@ -115,7 +120,7 @@ def run_streaming(args, pdf_path: Path, doc_id: str, workdir: Path) -> int:
             )
             all_raw.extend(mineru_adapter.parse(mineru_out, page_offset=s))
             collect_assets(mineru_out, workdir)
-            document = build_document.build_document(doc_id, all_raw, pages)
+            document = build_document.build_document(doc_id, all_raw, pages, **meta)
             remap_asset_paths(document)
             build_document.write_document(document, workdir)
             write_status(workdir, "extracting", e + 1, n)
@@ -184,7 +189,8 @@ def main() -> int:
         else:
             print(f"기존 MinerU 출력 없음: {single}", file=sys.stderr)
             return 1
-        document = build_document.build_document(doc_id, all_raw, pages)
+        meta = paper_meta.extract_paper_meta(pdf_path)
+        document = build_document.build_document(doc_id, all_raw, pages, **meta)
         remap_asset_paths(document)
         build_document.validate_and_log(document)
         build_document.write_document(document, workdir)

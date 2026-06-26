@@ -87,13 +87,19 @@ ipcMain.handle("docs:list", async () => {
       const doc = await readJson(path.join(root, e.name, "document.json"));
       if (!doc) continue; // document.json 없는 폴더는 건너뜀
       const status = await readJson(path.join(root, e.name, "status.json"));
+      const state = await readJson(path.join(root, e.name, "state.json"));
       docs.push({
         doc_id: e.name,
         title: doc.title,
+        authors: doc.authors ?? null,
+        journal: doc.journal ?? null,
         page_count: doc.page_count,
         // 추출 진행 상태(없으면 done 으로 간주 = 레거시 단일추출 문서)
         state: status?.state ?? "done",
         pages_done: status?.pages_done ?? doc.page_count,
+        // 읽기 상태(§10 사이드카)
+        finished: state?.finished ?? false,
+        last_read_at: state?.last_read_at ?? null,
       });
     }
     return docs;
@@ -122,6 +128,15 @@ ipcMain.handle("state:save", async (_e, docId: string, state: unknown) => {
   const file = path.join(docsRoot(), docId, "state.json");
   await fs.writeFile(file, JSON.stringify(state, null, 2), "utf8");
   return true;
+});
+
+// 읽기 상태(완독/최근 읽음) 부분 갱신 — 기존 state.json 을 병합 보존.
+ipcMain.handle("reading:update", async (_e, docId: string, patch: Record<string, unknown>) => {
+  const file = path.join(docsRoot(), docId, "state.json");
+  const prev = (await readJson(file)) ?? {};
+  const next = { ...prev, ...patch };
+  await fs.writeFile(file, JSON.stringify(next, null, 2), "utf8");
+  return next;
 });
 
 // 전역 설정 (§10) — 기본 타이포·폰트·단축키.
