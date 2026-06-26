@@ -44,7 +44,7 @@ export function BlockRenderer({ block, docId }: Props) {
       return (
         <figure {...attrs} className="blk-figure">
           {block.image && <img src={assetUrl(block.image)} alt={block.text ?? "figure"} />}
-          {block.text && <figcaption>{block.text}</figcaption>}
+          {block.text && <figcaption><RichText text={block.text} /></figcaption>}
         </figure>
       );
     case "caption":

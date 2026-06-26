@@ -224,3 +224,12 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-family);
 .footnotes-list { margin: 6px 0 0; padding-left: 1.4em; color: var(--muted); font-size: 0.88em; }
 .footnotes-list li { margin: 6px 0; }
 .fn-list-label { color: var(--accent); font-weight: 600; margin-right: 6px; }
+
+/* ── 논문 앞부분(article-info) 접이식 ── */
+.frontmatter { margin: 1.2em 0 1.6em; border: 1px solid var(--rule); border-radius: 10px; padding: 4px 14px; }
+.frontmatter summary { cursor: pointer; color: var(--muted); font-size: 0.9rem; padding: 8px 0; list-style: none; user-select: none; }
+.frontmatter summary::before { content: "▸ "; }
+.frontmatter[open] summary::before { content: "▾ "; }
+.frontmatter-body { font-size: 0.9em; color: var(--muted); padding-bottom: 8px; }
+.frontmatter-body .blk-paragraph { margin: 0.2em 0; }
+.frontmatter-body .blk-heading { font-size: 1em; margin: 0.6em 0 0.2em; color: var(--fg); }

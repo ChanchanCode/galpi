@@ -4,12 +4,32 @@ import type { PaperDocument } from "./types";
 import type { DocSummary } from "../electron/preload";
 import { BlockRenderer } from "./render/BlockRenderer";
 import { buildFootnotes, FootnoteContext } from "./render/footnotes";
+import { buildFrontMatter, deSpaceLabel, isSpacedLabel } from "./render/frontmatter";
+import type { Block } from "./types";
 import { TypographyPanel } from "./typography/TypographyPanel";
 import { SelectionTranslate } from "./translate/SelectionTranslate";
 import { useStore, registerFonts } from "./store/useStore";
 import { toCssVars } from "./store/typography";
 
 const GEAR = "⚙";
+
+function FrontMatterSection({ items, docId }: { items: Block[]; docId: string }) {
+  if (!items.length) return null;
+  return (
+    <details className="frontmatter">
+      <summary>논문 정보 (투고 이력 · 분류 · 키워드)</summary>
+      <div className="frontmatter-body">
+        {items.map((b) => (
+          <BlockRenderer
+            key={b.id}
+            block={b.text ? { ...b, text: deSpaceLabel(b.text) } : b}
+            docId={docId}
+          />
+        ))}
+      </div>
+    </details>
+  );
+}
 
 function relTime(iso: string | null): string | null {
   if (!iso) return null;
@@ -106,6 +126,7 @@ export function App() {
   const openSummary = docs.find((d) => d.doc_id === doc?.doc_id);
   const cssVars = toCssVars(typography) as CSSProperties;
   const footnotes = useMemo(() => (doc ? buildFootnotes(doc.blocks) : null), [doc]);
+  const frontMatter = useMemo(() => (doc ? buildFrontMatter(doc.blocks) : null), [doc]);
 
   const dropProps = {
     onDragOver: (e: React.DragEvent) => { e.preventDefault(); setDragging(true); },
@@ -129,11 +150,14 @@ export function App() {
             <main className="reader-scroll">
               <FootnoteContext.Provider value={footnotes?.byLabel ?? new Map()}>
                 <article className="reader-content" style={cssVars}>
-                  {doc.blocks
-                    .filter((b) => !footnotes?.pulled.has(b.id))
-                    .map((b) => (
-                      <BlockRenderer key={b.id} block={b} docId={doc.doc_id} />
-                    ))}
+                  {doc.blocks.map((b) => {
+                    if (frontMatter && b.id === frontMatter.startId) {
+                      return <FrontMatterSection key="fm" items={frontMatter.items} docId={doc.doc_id} />;
+                    }
+                    if (footnotes?.pulled.has(b.id) || frontMatter?.ids.has(b.id)) return null;
+                    if (isSpacedLabel(b.text)) return null; // "a b s t r a c t" 류 장식 라벨 숨김
+                    return <BlockRenderer key={b.id} block={b} docId={doc.doc_id} />;
+                  })}
                   {openSummary?.state === "extracting" && (
                     <p className="extract-more">⏳ 남은 페이지 추출 중… 완료되는 대로 이어집니다.</p>
                   )}
