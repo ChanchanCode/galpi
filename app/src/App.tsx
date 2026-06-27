@@ -6,9 +6,11 @@ import { BlockRenderer } from "./render/BlockRenderer";
 import { buildFootnotes, FootnoteContext } from "./render/footnotes";
 import { buildCrossRefIndex, CrossRefContext } from "./render/crossrefs";
 import { ReadingContext } from "./render/reading";
-import { FocusMode } from "./focus/FocusMode";
+import { FocusMode, type FocusKind } from "./focus/FocusMode";
 import { JumpBackButton } from "./nav/JumpBackButton";
 import { resetJumpHistory, undoJump } from "./nav/jump";
+import { displayCombo } from "./keys/keymap";
+import { GalpiMark } from "./ui/GalpiMark";
 import { buildFrontMatter, deSpaceLabel, isSpacedLabel } from "./render/frontmatter";
 import type { Block } from "./types";
 import { TypographyPanel } from "./typography/TypographyPanel";
@@ -65,7 +67,7 @@ export function App() {
   const [inspect, setInspect] = useState(false);
   const [hlPanel, setHlPanel] = useState(false);
   const [sectionPanel, setSectionPanel] = useState(false);
-  const [focusMode, setFocusMode] = useState(false);
+  const [focusMode, setFocusMode] = useState<FocusKind>("off");
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const openDocId = useRef<string | null>(null);
   // 방향키 페이지 이동: 목표 위치를 누적해 lerp (연타해도 위치가 더해짐, 감속 없음)
@@ -75,8 +77,10 @@ export function App() {
 
   const typography = useStore((s) => s.typography);
   const userFonts = useStore((s) => s.userFonts);
+  const keymap = useStore((s) => s.keymap);
   const sectionsCombo = useStore((s) => s.keymap.sections);
   const focusCombo = useStore((s) => s.keymap.focus);
+  const cycleFocus = () => setFocusMode((m) => (m === "off" ? "paragraph" : m === "paragraph" ? "sentence" : "off"));
   const bionicCombo = useStore((s) => s.keymap.bionic);
   const sentenceCombo = useStore((s) => s.keymap.sentenceBreak);
   const reading = useStore((s) => s.reading);
@@ -112,7 +116,7 @@ export function App() {
         setSectionPanel((v) => !v);
       } else if (matchCombo(e, focusCombo)) {
         e.preventDefault();
-        setFocusMode((v) => !v);
+        cycleFocus();
       } else if (matchCombo(e, bionicCombo)) {
         e.preventDefault();
         setReading({ bionic: !reading.bionic });
@@ -147,7 +151,8 @@ export function App() {
   // 목표 위치(scrollTarget)를 누적하고 매 프레임 그쪽으로 lerp → 연타하면 위치가 그대로 더해짐
   // (현재 위치 기준 재계산이 아니라, 빠르게/천천히 N번 누르면 같은 곳에 도착).
   useEffect(() => {
-    if (!doc || settingsOpen || shortcutsOpen) return;
+    // 포커스 모드일 때는 ←/→ 가 문단/문장 이동에 쓰이므로 페이지 이동은 끔
+    if (!doc || settingsOpen || shortcutsOpen || focusMode !== "off") return;
     const LERP = 0.24; // 클수록 빠르게 도착 (~0.4초)
     const STEP = 0.9; // 화면 대비 한 번 이동량(약 10% 겹침)
 
@@ -197,7 +202,7 @@ export function App() {
       scrollAnimating.current = false;
       scrollTarget.current = null;
     };
-  }, [doc, settingsOpen, shortcutsOpen]);
+  }, [doc, settingsOpen, shortcutsOpen, focusMode]);
 
   function refreshDocs() {
     window.paperAPI?.listDocs().then(setDocs).catch(() => setDocs([]));
@@ -263,7 +268,7 @@ export function App() {
       {doc ? (
         <div className="reader-root" {...dropProps}>
           <header className="reader-bar">
-            <button className="back-btn" onClick={() => { openDocId.current = null; setDoc(null); setInspect(false); setHlPanel(false); setSectionPanel(false); setFocusMode(false); }}>← 라이브러리</button>
+            <button className="back-btn" onClick={() => { openDocId.current = null; setDoc(null); setInspect(false); setHlPanel(false); setSectionPanel(false); setFocusMode("off"); }}>← 라이브러리</button>
             <span className="reader-title">{doc.title ?? doc.doc_id}</span>
             {openSummary?.state === "extracting" && (
               <span className="extract-badge">추출 중 {openSummary.pages_done}/{openSummary.page_count}p</span>
@@ -271,38 +276,38 @@ export function App() {
             <button
               className="icon-action reader-find"
               onClick={() => window.dispatchEvent(new Event("galpi:find-open"))}
-              title="텍스트 검색 (⌘F)"
+              title={`텍스트 검색 · ${displayCombo(keymap.search)}`}
               aria-label="검색"
             >🔎</button>
             <button
               className={`icon-action reader-peek ${inspect ? "on" : ""}`}
               onClick={() => setInspect((v) => !v)}
-              title="원본 대조 (검사 모드 토글 · 또는 ⌥ 누른 채 클릭)"
+              title={`원본 대조 — 원본 PDF와 비교 · ${displayCombo(keymap.sourcePeek)} (또는 ⌥+클릭)`}
               aria-label="원본 대조"
               aria-pressed={inspect}
-            >🔍</button>
+            >🖼</button>
             <button
               className={`icon-action reader-hl ${hlPanel ? "on" : ""}`}
               onClick={() => setHlPanel((v) => !v)}
-              title="형광펜 (드래그 선택 → 색 지정 · 목록 보기)"
+              title={`형광펜 — 선택 후 ${displayCombo(keymap.highlight)} (탭=색 순환, 꾹=제거) · 클릭=목록`}
               aria-label="형광펜"
               aria-pressed={hlPanel}
             >🖊</button>
             <button
-              className={`icon-action reader-focus ${focusMode ? "on" : ""}`}
-              onClick={() => setFocusMode((v) => !v)}
-              title="포커스 모드 (현재 문단만 또렷 · F)"
+              className={`icon-action reader-focus ${focusMode !== "off" ? "on" : ""}`}
+              onClick={cycleFocus}
+              title={`포커스 모드: ${focusMode === "off" ? "꺼짐" : focusMode === "paragraph" ? "문단" : "문장"} · ${displayCombo(keymap.focus)}로 전환(문단→문장→끄기) · ←/→ 로 이동`}
               aria-label="포커스 모드"
-              aria-pressed={focusMode}
+              aria-pressed={focusMode !== "off"}
             >◎</button>
             <button
               className={`icon-action reader-sections ${sectionPanel ? "on" : ""}`}
               onClick={() => setSectionPanel((v) => !v)}
-              title="목차 (섹션 이동)"
+              title={`목차 — 섹션 이동 · ${displayCombo(keymap.sections)}`}
               aria-label="목차"
               aria-pressed={sectionPanel}
             >☰</button>
-            <button className="icon-action reader-gear" onClick={() => setSettingsOpen(true)} title="읽기 설정" aria-label="설정">{GEAR}</button>
+            <button className="icon-action reader-gear" onClick={() => setSettingsOpen(true)} title="설정" aria-label="설정">{GEAR}</button>
           </header>
           <div className="reader-body">
             <main className="reader-scroll">
@@ -353,25 +358,22 @@ export function App() {
           <SelectionTranslate containerSel=".reader-content" />
           <SourcePeek doc={doc} sticky={inspect} onExitSticky={() => setInspect(false)} />
           <HighlightLayer doc={doc} panelOpen={hlPanel} onClosePanel={() => setHlPanel(false)} />
-          <FocusMode active={focusMode} docId={doc.doc_id} blockCount={doc.blocks.length} />
+          <FocusMode mode={focusMode} docId={doc.doc_id} blockCount={doc.blocks.length} />
           <JumpBackButton />
         </div>
       ) : (
         <div className="library-root" {...dropProps}>
           <header className="library-bar">
             <div className="library-brand">
+              <GalpiMark size={34} />
               <h1>갈피</h1>
-              <span className="library-tagline">읽던 곳에 갈피를 꽂아두세요</span>
             </div>
             <div className="bar-actions">
               <button className="icon-action" onClick={refreshDocs} title="새로고침" aria-label="새로고침">↻</button>
-              <button className="icon-action" onClick={() => setSettingsOpen(true)} title="읽기 설정" aria-label="설정">{GEAR}</button>
+              <button className="icon-action" onClick={() => setSettingsOpen(true)} title="설정" aria-label="설정">{GEAR}</button>
             </div>
           </header>
-          <p className="hint">
-            PDF를 이 창에 끌어다 놓으면 추출이 시작됩니다. (또는 <code>pipeline/extract.py</code>)
-          </p>
-          {loading && <p>여는 중…</p>}
+          {loading && <p className="hint">여는 중…</p>}
           {docs.length === 0 ? (
             <p className="empty">아직 추출된 문서가 없습니다. PDF를 끌어다 놓아 보세요.</p>
           ) : (
