@@ -13,6 +13,8 @@ interface Anchor {
 
 export function SelectionTranslate({ containerSel }: { containerSel: string }) {
   const translateCombo = useStore((s) => s.keymap.translate);
+  const provider = useStore((s) => s.ai.provider);
+  const providerLabel = provider === "openai" ? "OpenAI" : provider === "anthropic" ? "Claude" : "Gemini";
   const [anchor, setAnchor] = useState<Anchor | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -120,7 +122,7 @@ export function SelectionTranslate({ containerSel }: { containerSel: string }) {
           <div className="sel-result">{result}</div>
         )}
         <div className="sel-foot">
-          <span className="sel-engine">Gemini · 클라우드</span>
+          <span className="sel-engine">{providerLabel} · 클라우드</span>
           <button className="sel-close" onClick={close}>닫기</button>
         </div>
       </div>

@@ -1,6 +1,6 @@
 {
   "name": "paper-reflow-reader",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "논문 가독성 리플로우 뷰어 (Electron + React)",
   "main": "dist-electron/main.cjs",
   "type": "module",

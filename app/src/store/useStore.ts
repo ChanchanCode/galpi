@@ -5,26 +5,21 @@ import { create } from "zustand";
 import { DEFAULT_TYPOGRAPHY, type Typography } from "./typography";
 import { DEFAULT_KEYMAP, type ActionId, type Keymap } from "../keys/keymap";
 import { encodePreset, sanitizeTypography, type SavedPreset } from "../presets/share";
+import { DEFAULT_AI, migrateAI, type AIConfig, type AIProvider } from "../ai/ai";
 import type { ReadingOpts } from "../render/reading";
 import type { UserFont } from "../../electron/preload";
 
 const DEFAULT_READING: ReadingOpts = { bionic: false, sentenceBreak: false };
 
-export interface TranslationConfig {
-  apiKey: string;
-  model: string;
-}
-
 interface GlobalSettings {
   typography: Typography;
   fonts: UserFont[];
-  translation?: TranslationConfig;
+  translation?: { apiKey?: string; model?: string }; // 레거시(마이그레이션용)
+  ai?: AIConfig;
   keymap?: Partial<Keymap>;
   customPresets?: SavedPreset[];
   reading?: Partial<ReadingOpts>;
 }
-
-const DEFAULT_TRANSLATION: TranslationConfig = { apiKey: "", model: "gemini-2.5-flash-lite" };
 
 let presetSeq = 0;
 function newPresetId(): string {
@@ -34,7 +29,7 @@ function newPresetId(): string {
 interface Store {
   typography: Typography;
   userFonts: UserFont[];
-  translation: TranslationConfig;
+  ai: AIConfig;
   keymap: Keymap;
   customPresets: SavedPreset[];
   reading: ReadingOpts;
@@ -45,7 +40,9 @@ interface Store {
   setTypography: (patch: Partial<Typography>) => void;
   resetToDefault: () => void;
   addUserFonts: () => Promise<void>;
-  setTranslationConfig: (patch: Partial<TranslationConfig>) => Promise<void>;
+  setAIProvider: (provider: AIProvider) => void;
+  setAIKey: (provider: AIProvider, key: string) => void;
+  setAIModel: (provider: AIProvider, model: string) => void;
 
   setKeybinding: (id: ActionId, combo: string) => void;
   resetKeymap: () => void;
@@ -62,23 +59,19 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null;
 export const useStore = create<Store>((set, get) => ({
   typography: DEFAULT_TYPOGRAPHY,
   userFonts: [],
-  translation: DEFAULT_TRANSLATION,
+  ai: DEFAULT_AI,
   keymap: DEFAULT_KEYMAP,
   customPresets: [],
   reading: DEFAULT_READING,
   loaded: false,
 
-  // 앱 시작 시 전역 설정 로드 (타이포 + 사용자 폰트 + 번역 + 단축키 + 사용자 프리셋)
+  // 앱 시작 시 전역 설정 로드 (타이포 + 사용자 폰트 + AI + 단축키 + 사용자 프리셋)
   initSession: async () => {
     const g = (await window.paperAPI.loadSettings()) as GlobalSettings | null;
-    // 옛 기본 모델(2.0-flash, 429 잦음)은 새 기본값으로 자동 교체
-    const savedTr: Partial<TranslationConfig> = g?.translation ?? {};
-    const migratedModel =
-      !savedTr.model || savedTr.model === "gemini-2.0-flash" ? DEFAULT_TRANSLATION.model : savedTr.model;
     set({
       typography: { ...DEFAULT_TYPOGRAPHY, ...(g?.typography ?? {}) },
       userFonts: g?.fonts ?? [],
-      translation: { ...DEFAULT_TRANSLATION, ...savedTr, model: migratedModel },
+      ai: migrateAI(g?.ai, g?.translation),
       keymap: { ...DEFAULT_KEYMAP, ...(g?.keymap ?? {}) },
       customPresets: Array.isArray(g?.customPresets)
         ? g!.customPresets!.map((p) => ({ ...p, typography: sanitizeTypography(p.typography) }))
@@ -115,10 +108,18 @@ export const useStore = create<Store>((set, get) => ({
     await persistSettings(get);
   },
 
-  // 번역 설정(API 키/모델) 갱신 + 즉시 저장
-  setTranslationConfig: async (patch) => {
-    set({ translation: { ...get().translation, ...patch } });
-    await persistSettings(get);
+  // ── AI 설정(제공자/키/모델) — 변경 즉시 저장 ─────────────────────
+  setAIProvider: (provider) => {
+    set((st) => ({ ai: { ...st.ai, provider } }));
+    void persistSettings(get);
+  },
+  setAIKey: (provider, key) => {
+    set((st) => ({ ai: { ...st.ai, keys: { ...st.ai.keys, [provider]: key } } }));
+    void persistSettings(get);
+  },
+  setAIModel: (provider, model) => {
+    set((st) => ({ ai: { ...st.ai, models: { ...st.ai.models, [provider]: model } } }));
+    void persistSettings(get);
   },
 
   // ── 단축키 ──────────────────────────────────────────────────────
@@ -167,8 +168,8 @@ export function presetShareCode(preset: SavedPreset): string {
 
 // 전역 settings.json 을 한 곳에서 직렬화 — 부분 저장이 다른 키를 덮어쓰지 않게.
 async function persistSettings(get: () => Store): Promise<void> {
-  const { typography, userFonts, translation, keymap, customPresets, reading } = get();
-  await window.paperAPI.saveSettings({ typography, fonts: userFonts, translation, keymap, customPresets, reading });
+  const { typography, userFonts, ai, keymap, customPresets, reading } = get();
+  await window.paperAPI.saveSettings({ typography, fonts: userFonts, ai, keymap, customPresets, reading });
 }
 
 function dedupeFonts(fonts: UserFont[]): UserFont[] {

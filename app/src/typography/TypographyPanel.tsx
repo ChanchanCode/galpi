@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useStore, fontFamilyName, presetShareCode } from "../store/useStore";
 import { decodePreset, type SavedPreset } from "../presets/share";
+import { AISettings } from "../ai/AISettings";
 import {
   FONT_OPTIONS,
   PRESETS,
@@ -79,8 +80,6 @@ export function TypographyPanel({
   const t = useStore((s) => s.typography);
   const userFonts = useStore((s) => s.userFonts);
   const set = useStore((s) => s.setTypography);
-  const translation = useStore((s) => s.translation);
-  const setTranslationConfig = useStore((s) => s.setTranslationConfig);
   const reading = useStore((s) => s.reading);
   const setReading = useStore((s) => s.setReading);
   const customPresets = useStore((s) => s.customPresets);
@@ -90,6 +89,7 @@ export function TypographyPanel({
   const importPreset = useStore((s) => s.importPreset);
   const apply = (patch: Partial<Typography>) => set(patch);
 
+  const [tab, setTab] = useState<"read" | "ai">("read");
   const [presetName, setPresetName] = useState("");
   const [importText, setImportText] = useState("");
   const [importErr, setImportErr] = useState(false);
@@ -193,10 +193,19 @@ export function TypographyPanel({
     <div className="modal-backdrop" onMouseDown={onClose}>
       <aside className="typo-panel modal" onMouseDown={(e) => e.stopPropagation()}>
         <div className="typo-head">
-          <strong>읽기 설정</strong>
+          <strong>설정</strong>
           <button className="icon-btn" onClick={onClose} aria-label="닫기">×</button>
         </div>
 
+        <div className="seg tabs">
+          <button className={`seg-btn ${tab === "read" ? "on" : ""}`} onClick={() => setTab("read")}>읽기</button>
+          <button className={`seg-btn ${tab === "ai" ? "on" : ""}`} onClick={() => setTab("ai")}>AI</button>
+        </div>
+
+        {tab === "ai" && <AISettings />}
+
+        {tab === "read" && (
+        <>
         {/* 테마 · 정렬 */}
         <div className="typo-section">
           <div className="seg">
@@ -331,27 +340,7 @@ export function TypographyPanel({
           <button className="seg-btn full" onClick={onOpenShortcuts}>단축키 설정…</button>
         </div>
 
-        {/* 번역 */}
-        <div className="typo-section">
-          <label className="ctrl">
-            <span className="ctrl-label">번역 Gemini API 키 <span className="muted-inline">(선택 후 T / 우클릭)</span></span>
-            <input
-              type="password"
-              placeholder="AIza… (aistudio.google.com 무료)"
-              value={translation.apiKey}
-              onChange={(e) => setTranslationConfig({ apiKey: e.target.value })}
-            />
-          </label>
-          <label className="ctrl">
-            <span className="ctrl-label">모델</span>
-            <select value={translation.model} onChange={(e) => setTranslationConfig({ model: e.target.value })}>
-              <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite (기본 · 빠름)</option>
-              <option value="gemini-2.5-flash">gemini-2.5-flash (정확)</option>
-              <option value="gemini-2.0-flash">gemini-2.0-flash</option>
-            </select>
-          </label>
-          <p className="typo-note">선택한 문장이 Google로 전송됩니다. 429(할당량) 오류가 나면 다른 모델로 바꿔보세요. 미공개 논문은 키를 비워 두세요.</p>
-        </div>
+        {/* 번역/AI 키·모델은 상단 'AI' 탭으로 이동 */}
 
         {/* 추출 엔진 · 업데이트 (배포) */}
         <div className="typo-section">
@@ -393,6 +382,8 @@ export function TypographyPanel({
           <button className="link-btn" onClick={() => useStore.getState().resetToDefault()}>기본값으로 되돌리기</button>
           <span className="typo-note">설정은 자동 저장됩니다.</span>
         </div>
+        </>
+        )}
       </aside>
     </div>
   );

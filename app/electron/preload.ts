@@ -73,6 +73,9 @@ const api = {
   }> => ipcRenderer.invoke("pipeline:status"),
   pickPython: (): Promise<{ canceled?: boolean; pythonPath?: string; pythonOk?: boolean }> =>
     ipcRenderer.invoke("pipeline:pickPython"),
+  // AI 제공자 모델 목록 조회(키로 직접 API 호출)
+  listModels: (provider: string, key: string): Promise<{ models?: string[]; error?: string }> =>
+    ipcRenderer.invoke("ai:listModels", provider, key),
   // 원클릭 엔진 설치 + 진행 로그 구독
   installEngine: (): Promise<{ code: number; error?: string }> =>
     ipcRenderer.invoke("pipeline:install"),

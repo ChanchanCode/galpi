@@ -268,63 +268,176 @@ ipcMain.handle("translate:text", async (_e, text: string) => {
   }
 });
 
-// 스트리밍 번역 — SSE(streamGenerateContent)로 조각을 받아 즉시 렌더러로 전송(translate:delta),
-// 완료 시 전체 텍스트 반환. 체감 지연이 크게 줄어든다.
-ipcMain.handle("translate:stream", async (e, text: string, reqId: number) => {
-  const settings = (await readJson(settingsPath())) as
-    | { translation?: { apiKey?: string; model?: string } }
-    | null;
-  const apiKey = settings?.translation?.apiKey?.trim();
-  const saved = settings?.translation?.model?.trim();
-  const model = !saved || saved === "gemini-2.0-flash" ? "gemini-2.5-flash-lite" : saved;
-  if (!apiKey) {
-    return { error: "읽기 설정 → 번역에서 Gemini API 키를 입력하세요 (aistudio.google.com 무료 발급)." };
+// ── 멀티 제공자 AI (Gemini / OpenAI / Anthropic) ─────────────────────────
+type AIProvider = "gemini" | "openai" | "anthropic";
+const TRANSLATE_SYS = TRANSLATE_PROMPT.replace(/\n\nText:\n$/, "");
+
+// settings.ai → {provider, model, key}. 레거시 settings.translation 도 흡수.
+function resolveAI(s: any): { provider: AIProvider; model: string; key: string } {
+  const ai = s?.ai;
+  if (ai?.provider) {
+    const provider = ai.provider as AIProvider;
+    let model = (ai.models?.[provider] ?? "").trim();
+    if (provider === "gemini" && (!model || model === "gemini-2.0-flash")) model = "gemini-2.5-flash-lite";
+    return { provider, model, key: (ai.keys?.[provider] ?? "").trim() };
   }
+  const t = s?.translation;
+  const saved = t?.model?.trim();
+  const model = !saved || saved === "gemini-2.0-flash" ? "gemini-2.5-flash-lite" : saved;
+  return { provider: "gemini", model, key: (t?.apiKey ?? "").trim() };
+}
+
+// SSE data 라인 리더(제공자 공통)
+async function readSSE(body: ReadableStream<Uint8Array>, onData: (data: string) => void): Promise<void> {
+  const reader = body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (line.startsWith("data:")) onData(line.slice(5).trim());
+    }
+  }
+}
+
+interface StreamResult {
+  full: string;
+  error?: string;
+  status?: number;
+}
+
+async function streamProvider(
+  provider: AIProvider,
+  key: string,
+  model: string,
+  text: string,
+  send: (t: string) => void,
+): Promise<StreamResult> {
+  let r: Response;
+  if (provider === "gemini") {
+    r = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${key}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: TRANSLATE_SYS }] },
+          contents: [{ parts: [{ text }] }],
+          // thinking 끄기 → 2.5 모델 지연 대폭 감소
+          generationConfig: { temperature: 0.2, thinkingConfig: { thinkingBudget: 0 } },
+        }),
+      },
+    );
+  } else if (provider === "openai") {
+    r = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model,
+        stream: true,
+        temperature: 0.2,
+        messages: [
+          { role: "system", content: TRANSLATE_SYS },
+          { role: "user", content: text },
+        ],
+      }),
+    });
+  } else {
+    r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model,
+        max_tokens: 1024,
+        temperature: 0.2,
+        stream: true,
+        system: TRANSLATE_SYS,
+        messages: [{ role: "user", content: text }],
+      }),
+    });
+  }
+  if (!r.ok || !r.body) {
+    const b = await r.text().catch(() => "");
+    return { full: "", error: `${provider} API 오류 ${r.status}: ${b.slice(0, 200)}`, status: r.status };
+  }
+  let full = "";
+  await readSSE(r.body, (d) => {
+    if (!d || d === "[DONE]") return;
+    try {
+      const j = JSON.parse(d) as any;
+      let t = "";
+      if (provider === "gemini") t = j.candidates?.[0]?.content?.parts?.map((p: any) => p.text ?? "").join("") ?? "";
+      else if (provider === "openai") t = j.choices?.[0]?.delta?.content ?? "";
+      else if (j.type === "content_block_delta" && j.delta?.type === "text_delta") t = j.delta.text ?? "";
+      if (t) {
+        full += t;
+        send(t);
+      }
+    } catch {
+      /* keepalive/부분 라인 무시 */
+    }
+  });
+  return { full };
+}
+
+// 스트리밍 번역 — 제공자별 SSE → 조각 즉시 전송. 일시 오류(429/503/500/529)는 1회 재시도.
+ipcMain.handle("translate:stream", async (e, text: string, reqId: number) => {
+  const s = await readJson(settingsPath());
+  const { provider, model, key } = resolveAI(s);
+  if (!key) return { error: `${provider.toUpperCase()} API 키가 없습니다. 설정 → AI 에서 입력하세요.` };
+  if (!model) return { error: "모델을 선택하세요 (설정 → AI)." };
   const send = (delta: string) => {
     if (!e.sender.isDestroyed()) e.sender.send("translate:delta", { id: reqId, delta });
   };
   try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
-    const r = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: TRANSLATE_PROMPT + text }] }],
-        generationConfig: { temperature: 0.2 },
-      }),
+    let res = await streamProvider(provider, key, model, text, send);
+    if (res.error && res.full === "" && res.status && [429, 500, 503, 529].includes(res.status)) {
+      await new Promise((r) => setTimeout(r, 900)); // 과부하 일시 오류 → 잠깐 쉬고 1회 재시도
+      res = await streamProvider(provider, key, model, text, send);
+    }
+    return res.error ? { error: res.error } : { translation: res.full.trim() };
+  } catch (err) {
+    return { error: String(err) };
+  }
+});
+
+// 제공자별 모델 목록 조회 (키로 직접 API 호출)
+ipcMain.handle("ai:listModels", async (_e, provider: AIProvider, key: string) => {
+  const k = (key ?? "").trim();
+  if (!k) return { error: "키를 먼저 입력하세요." };
+  try {
+    if (provider === "gemini") {
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=${k}`);
+      if (!r.ok) return { error: `오류 ${r.status}` };
+      const j = (await r.json()) as any;
+      const models = (j.models ?? [])
+        .filter((m: any) => (m.supportedGenerationMethods ?? []).includes("generateContent"))
+        .map((m: any) => String(m.name ?? "").replace(/^models\//, ""))
+        .filter(Boolean);
+      return { models };
+    }
+    if (provider === "openai") {
+      const r = await fetch("https://api.openai.com/v1/models", { headers: { Authorization: `Bearer ${k}` } });
+      if (!r.ok) return { error: `오류 ${r.status}` };
+      const j = (await r.json()) as any;
+      const models = (j.data ?? [])
+        .map((m: any) => m.id as string)
+        .filter((id: string) => /^(gpt|o\d|chatgpt)/i.test(id))
+        .sort();
+      return { models };
+    }
+    const r = await fetch("https://api.anthropic.com/v1/models?limit=100", {
+      headers: { "x-api-key": k, "anthropic-version": "2023-06-01" },
     });
-    if (!r.ok || !r.body) {
-      const body = await r.text().catch(() => "");
-      return { error: `Gemini API 오류 ${r.status}: ${body.slice(0, 160)}` };
-    }
-    const reader = r.body.getReader();
-    const dec = new TextDecoder();
-    let buf = "";
-    let full = "";
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      let nl: number;
-      while ((nl = buf.indexOf("\n")) >= 0) {
-        const line = buf.slice(0, nl).trim();
-        buf = buf.slice(nl + 1);
-        if (!line.startsWith("data:")) continue;
-        const data = line.slice(5).trim();
-        if (!data || data === "[DONE]") continue;
-        try {
-          const j = JSON.parse(data) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
-          const t = j.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
-          if (t) {
-            full += t;
-            send(t);
-          }
-        } catch {
-          /* keepalive/부분 라인 무시 */
-        }
-      }
-    }
-    return { translation: full.trim() };
+    if (!r.ok) return { error: `오류 ${r.status}` };
+    const j = (await r.json()) as any;
+    const models = (j.data ?? []).map((m: any) => m.id as string).filter(Boolean);
+    return { models };
   } catch (err) {
     return { error: String(err) };
   }
