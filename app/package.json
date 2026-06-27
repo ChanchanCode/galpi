@@ -71,7 +71,8 @@
       {
         "provider": "github",
         "owner": "ChanchanCode",
-        "repo": "galpi"
+        "repo": "galpi",
+        "releaseType": "release"
       }
     ]
   }
