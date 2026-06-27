@@ -325,6 +325,31 @@ ipcMain.handle("pipeline:pickPython", async () => {
   return { pythonPath, pythonOk: existsSync(pythonPath) };
 });
 
+// 원클릭 추출 엔진 설치 — 동봉된 setup-mac.sh 를 로그인 셸로 실행(사용자 PATH=brew/python 확보),
+// 진행 로그를 렌더러로 스트리밍. 친구가 터미널 없이 버튼만 누르면 됨.
+ipcMain.handle("pipeline:install", async (e) => {
+  const script = path.join(pipelineScriptsDir(), "setup-mac.sh");
+  if (!existsSync(script)) return { code: -1, error: `설치 스크립트 없음: ${script}` };
+  const send = (line: string) => {
+    if (!e.sender.isDestroyed()) e.sender.send("pipeline:install-log", line);
+  };
+  const shell0 = process.env.SHELL || "/bin/zsh";
+  // 로그인 셸(-lc)로 brew/python PATH 확보 + 흔한 경로 보강(GUI 앱은 PATH 가 제한적)
+  const env = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH ?? ""}` };
+  return await new Promise<{ code: number; error?: string }>((resolve) => {
+    let child;
+    try {
+      child = spawn(shell0, ["-lc", `bash "${script}"`], { env });
+    } catch (err) {
+      return resolve({ code: -1, error: String(err) });
+    }
+    child.stdout.on("data", (d) => send(d.toString()));
+    child.stderr.on("data", (d) => send(d.toString()));
+    child.on("error", (err) => resolve({ code: -1, error: String(err) }));
+    child.on("close", (code) => resolve({ code: code ?? -1 }));
+  });
+});
+
 // ── 앱 버전 / 업데이트 확인(수동) / 외부 링크 ────────────────────────────
 ipcMain.handle("app:version", () => app.getVersion());
 

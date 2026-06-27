@@ -54,6 +54,14 @@ const api = {
   }> => ipcRenderer.invoke("pipeline:status"),
   pickPython: (): Promise<{ canceled?: boolean; pythonPath?: string; pythonOk?: boolean }> =>
     ipcRenderer.invoke("pipeline:pickPython"),
+  // 원클릭 엔진 설치 + 진행 로그 구독
+  installEngine: (): Promise<{ code: number; error?: string }> =>
+    ipcRenderer.invoke("pipeline:install"),
+  onInstallLog: (cb: (line: string) => void): (() => void) => {
+    const h = (_e: unknown, line: string) => cb(line);
+    ipcRenderer.on("pipeline:install-log", h);
+    return () => ipcRenderer.removeListener("pipeline:install-log", h);
+  },
   appVersion: (): Promise<string> => ipcRenderer.invoke("app:version"),
   checkUpdate: (): Promise<{
     current: string;

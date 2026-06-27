@@ -463,6 +463,14 @@ body[data-hl-dim="on"] .reader-content ::selection { background: transparent; }
 .dist-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .dist-row .seg-btn { flex: 0 0 auto; min-width: 0; padding: 6px 12px; }
 .dist-row .ctrl-label { margin: 0; }
+.install-log {
+  margin: 8px 0 0; max-height: 200px; overflow-y: auto;
+  background: color-mix(in srgb, var(--fg) 4%, var(--bg));
+  border: 1px solid var(--rule); border-radius: 8px; padding: 8px 10px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.72rem; line-height: 1.45; color: var(--muted);
+  white-space: pre-wrap; word-break: break-word;
+}
 
 /* 수식 폴백 (§7) */
 .formula-fallback { display: inline-flex; align-items: center; gap: 6px; }

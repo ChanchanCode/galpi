@@ -1,6 +1,6 @@
 // 읽기 설정 패널 (§6.2, §6.3). 모든 값 실시간 → CSS 변수. 넓은 모달.
 // 입력은 슬라이더 + 증감(−/＋) 버튼 조합(드래그·미세조정 둘 다 편하게).
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useStore, fontFamilyName, presetShareCode } from "../store/useStore";
 import { decodePreset, type SavedPreset } from "../presets/share";
 import {
@@ -116,6 +116,35 @@ export function TypographyPanel({
     if (!r.canceled) refreshPipe();
   };
   const engineReady = !!pipe && pipe.pythonOk && pipe.scriptOk;
+
+  // 원클릭 엔진 설치 + 진행 로그
+  const [installing, setInstalling] = useState(false);
+  const [installLog, setInstallLog] = useState<string[]>([]);
+  const logRef = useRef<HTMLPreElement>(null);
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [installLog]);
+  const onInstall = async () => {
+    setInstalling(true);
+    setInstallLog(["설치 시작 — Python·MinerU 자동 설치. 수 분 걸리고 용량이 큽니다…"]);
+    const off = window.paperAPI.onInstallLog((line) =>
+      setInstallLog((p) => [...p, ...line.split(/\r?\n/).filter(Boolean)].slice(-400)),
+    );
+    let res: { code: number; error?: string } = { code: -1 };
+    try {
+      res = await window.paperAPI.installEngine();
+    } finally {
+      off();
+      setInstalling(false);
+    }
+    await refreshPipe();
+    setInstallLog((p) => [
+      ...p,
+      res.code === 0
+        ? "✓ 설치 완료! 이제 PDF를 창에 끌어다 놓으면 추출됩니다."
+        : `✗ 실패(코드 ${res.code})${res.error ? " — " + res.error : ""}. 로그를 확인하세요.`,
+    ]);
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -337,11 +366,18 @@ export function TypographyPanel({
             <button className="seg-btn" onClick={onPickPython}>Python 직접 지정</button>
           </div>
           {pipe && !engineReady && (
-            <p className="typo-note">
-              PDF를 직접 추출하려면 추출 엔진 설치가 필요합니다. 터미널에서 아래를 실행하세요:
-              <br />
-              <code style={{ userSelect: "all" }}>bash "{pipe.setupScript}"</code>
-            </p>
+            <>
+              <button className="seg-btn full" onClick={onInstall} disabled={installing}>
+                {installing ? "설치 중… (창을 닫지 마세요)" : "⬇ 추출 엔진 설치 (원클릭)"}
+              </button>
+              <p className="typo-note">
+                PDF를 직접 추출하려면 한 번 설치가 필요합니다. 버튼을 누르면 Python·MinerU 를 자동
+                설치합니다(수 분·용량 큼). Homebrew 가 없으면 로그에 안내가 표시됩니다.
+              </p>
+            </>
+          )}
+          {installLog.length > 0 && (
+            <pre ref={logRef} className="install-log">{installLog.join("\n")}</pre>
           )}
         </div>
 
