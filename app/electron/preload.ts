@@ -22,6 +22,12 @@ const api = {
   loadState: (docId: string): Promise<unknown> => ipcRenderer.invoke("state:load", docId),
   saveState: (docId: string, state: unknown): Promise<boolean> =>
     ipcRenderer.invoke("state:save", docId, state),
+  // 라이브러리 정리(폴더/배정/이름) 메타 + 문서 삭제
+  loadLibrary: (): Promise<{ folders: { id: string; name: string; parentId: string | null }[]; docs: Record<string, { folder?: string | null; title?: string }> }> =>
+    ipcRenderer.invoke("library:load"),
+  saveLibrary: (lib: unknown): Promise<boolean> => ipcRenderer.invoke("library:save", lib),
+  deleteDoc: (docId: string): Promise<{ ok?: boolean; error?: string }> =>
+    ipcRenderer.invoke("docs:delete", docId),
   loadSettings: (): Promise<unknown> => ipcRenderer.invoke("settings:load"),
   saveSettings: (settings: unknown): Promise<boolean> =>
     ipcRenderer.invoke("settings:save", settings),

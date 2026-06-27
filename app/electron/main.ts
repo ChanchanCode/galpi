@@ -170,6 +170,35 @@ ipcMain.handle("reading:update", async (_e, docId: string, patch: Record<string,
   return next;
 });
 
+// ── 라이브러리 정리 (폴더 트리 + 문서 폴더배정/이름변경) ─────────────────
+// library.json: { folders: [{id,name,parentId}], docs: { [docId]: {folder, title} } }
+function libraryPath(): string {
+  return path.join(appSupportDir(), "library.json");
+}
+ipcMain.handle("library:load", async () => {
+  const lib = (await readJson(libraryPath())) as any;
+  return lib && typeof lib === "object" && Array.isArray(lib.folders)
+    ? { folders: lib.folders, docs: lib.docs ?? {} }
+    : { folders: [], docs: {} };
+});
+ipcMain.handle("library:save", async (_e, lib: unknown) => {
+  await fs.mkdir(appSupportDir(), { recursive: true });
+  await fs.writeFile(libraryPath(), JSON.stringify(lib, null, 2), "utf8");
+  return true;
+});
+// 문서 영구 삭제 — docs/<docId> 폴더 제거. id 검증으로 경로 탈출 차단.
+ipcMain.handle("docs:delete", async (_e, docId: string) => {
+  if (!/^[A-Za-z0-9._-]+$/.test(docId) || docId === "." || docId === "..") {
+    return { error: "잘못된 문서 ID" };
+  }
+  try {
+    await fs.rm(path.join(docsRoot(), docId), { recursive: true, force: true });
+    return { ok: true };
+  } catch (err) {
+    return { error: String(err) };
+  }
+});
+
 // 전역 설정 (§10) — 기본 타이포·폰트·단축키.
 ipcMain.handle("settings:load", async () => {
   const file = path.join(app.getPath("appData"), "PaperReader", "settings.json");
