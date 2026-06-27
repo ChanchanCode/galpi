@@ -4,7 +4,7 @@ export type ThemeKey = "light" | "sepia" | "dark";
 export type AlignKey = "left" | "justify";
 
 export interface Typography {
-  contentMaxWidth: number; // px  (560–960)
+  contentMaxWidth: number; // px  (560–960) — 본문 폭(여백은 이 폭 안에서 일정하게 유지)
   lineHeight: number; //          (1.3–2.4)
   paragraphSpacing: number; // em (0.4–2.0)
   fontSize: number; // px         (14–24)
@@ -14,7 +14,6 @@ export interface Typography {
   mathScale: number; //           (0.9–1.3)
   textAlign: AlignKey;
   theme: ThemeKey;
-  pagePadding: number; // px
 }
 
 // 내장 폰트 스택 (§6.3). 시스템 가용 폰트 위주 + 사용자 업로드로 확장.
@@ -38,13 +37,23 @@ export const DEFAULT_TYPOGRAPHY: Typography = {
   mathScale: 1.0,
   textAlign: "left",
   theme: "light",
-  pagePadding: 48,
 };
 
-// 프리셋 (§6.2): 기본 / 집중(넓은 줄간격·좁은 폭) / 고대비
+// 프리셋 (§6.2): 기본 / 집중(사용자 공유 설정) / 고대비
 export const PRESETS: Record<string, Partial<Typography>> = {
   기본: { ...DEFAULT_TYPOGRAPHY },
-  집중: { contentMaxWidth: 600, lineHeight: 2.0, fontSize: 19, paragraphSpacing: 1.4 },
+  집중: {
+    contentMaxWidth: 860,
+    lineHeight: 2.25,
+    paragraphSpacing: 1.8,
+    fontSize: 20,
+    letterSpacing: 0,
+    fontFamily: FONT_OPTIONS[0].value,
+    headingFontFamily: FONT_OPTIONS[0].value,
+    mathScale: 1.0,
+    textAlign: "left",
+    theme: "sepia",
+  },
   고대비: { theme: "dark", fontSize: 20, lineHeight: 1.8, letterSpacing: 0.01 },
 };
 
@@ -60,6 +69,6 @@ export function toCssVars(t: Typography): Record<string, string> {
     "--heading-font-family": t.headingFontFamily,
     "--math-scale": `${t.mathScale}`,
     "--text-align": t.textAlign,
-    "--page-padding": `${t.pagePadding}px`,
+    // --page-padding 은 styles.css 의 고정값(본문 폭으로 일원화) 사용 — 여기서 내보내지 않음.
   };
 }

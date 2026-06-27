@@ -4,12 +4,23 @@ import type { PaperDocument } from "./types";
 import type { DocSummary } from "../electron/preload";
 import { BlockRenderer } from "./render/BlockRenderer";
 import { buildFootnotes, FootnoteContext } from "./render/footnotes";
+import { buildCrossRefIndex, CrossRefContext } from "./render/crossrefs";
+import { ReadingContext } from "./render/reading";
+import { FocusMode } from "./focus/FocusMode";
+import { JumpBackButton } from "./nav/JumpBackButton";
+import { resetJumpHistory, undoJump } from "./nav/jump";
 import { buildFrontMatter, deSpaceLabel, isSpacedLabel } from "./render/frontmatter";
 import type { Block } from "./types";
 import { TypographyPanel } from "./typography/TypographyPanel";
 import { SelectionTranslate } from "./translate/SelectionTranslate";
+import { SourcePeek } from "./sourcepeek/SourcePeek";
+import { HighlightLayer } from "./highlight/HighlightLayer";
+import { FindBar } from "./search/FindBar";
+import { SectionRail } from "./sections/SectionRail";
+import { ShortcutsPanel } from "./keys/ShortcutsPanel";
 import { useStore, registerFonts } from "./store/useStore";
 import { toCssVars } from "./store/typography";
+import { isEditableTarget, matchCombo } from "./keys/keymap";
 
 const GEAR = "⚙";
 
@@ -51,10 +62,25 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [inspect, setInspect] = useState(false);
+  const [hlPanel, setHlPanel] = useState(false);
+  const [sectionPanel, setSectionPanel] = useState(false);
+  const [focusMode, setFocusMode] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const openDocId = useRef<string | null>(null);
+  // 방향키 페이지 이동: 목표 위치를 누적해 lerp (연타해도 위치가 더해짐, 감속 없음)
+  const scrollTarget = useRef<number | null>(null);
+  const scrollAnimating = useRef(false);
+  const scrollRaf = useRef<number | null>(null);
 
   const typography = useStore((s) => s.typography);
   const userFonts = useStore((s) => s.userFonts);
+  const sectionsCombo = useStore((s) => s.keymap.sections);
+  const focusCombo = useStore((s) => s.keymap.focus);
+  const bionicCombo = useStore((s) => s.keymap.bionic);
+  const sentenceCombo = useStore((s) => s.keymap.sentenceBreak);
+  const reading = useStore((s) => s.reading);
+  const setReading = useStore((s) => s.setReading);
   const initSession = useStore((s) => s.initSession);
 
   useEffect(() => {
@@ -75,6 +101,103 @@ export function App() {
   useEffect(() => {
     if (userFonts.length) registerFonts(userFonts);
   }, [userFonts]);
+
+  // 목차 패널 토글 단축키 (기본 \)
+  useEffect(() => {
+    if (!doc) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (isEditableTarget(e.target)) return;
+      if (matchCombo(e, sectionsCombo)) {
+        e.preventDefault();
+        setSectionPanel((v) => !v);
+      } else if (matchCombo(e, focusCombo)) {
+        e.preventDefault();
+        setFocusMode((v) => !v);
+      } else if (matchCombo(e, bionicCombo)) {
+        e.preventDefault();
+        setReading({ bionic: !reading.bionic });
+      } else if (matchCombo(e, sentenceCombo)) {
+        e.preventDefault();
+        setReading({ sentenceBreak: !reading.sentenceBreak });
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [doc, sectionsCombo, focusCombo, bionicCombo, sentenceCombo, reading.bionic, reading.sentenceBreak, setReading]);
+
+  // 문서 전환 시 점프 히스토리 초기화 (라이브러리로 나가면 doc=null → 초기화)
+  useEffect(() => {
+    resetJumpHistory();
+  }, [doc?.doc_id]);
+
+  // Cmd/Ctrl+Z — 점프 원위치로 되돌리기(도착지가 화면 밖이어도 동작)
+  useEffect(() => {
+    if (!doc) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (isEditableTarget(e.target)) return;
+      if ((e.key === "z" || e.key === "Z") && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
+        if (undoJump()) e.preventDefault();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [doc]);
+
+  // 좌/우 방향키로 한 화면씩 슉슉 이동 (→ 다음 · ← 이전). 위/아래는 기본 미세 스크롤 유지.
+  // 목표 위치(scrollTarget)를 누적하고 매 프레임 그쪽으로 lerp → 연타하면 위치가 그대로 더해짐
+  // (현재 위치 기준 재계산이 아니라, 빠르게/천천히 N번 누르면 같은 곳에 도착).
+  useEffect(() => {
+    if (!doc || settingsOpen || shortcutsOpen) return;
+    const LERP = 0.24; // 클수록 빠르게 도착 (~0.4초)
+    const STEP = 0.9; // 화면 대비 한 번 이동량(약 10% 겹침)
+
+    const tick = () => {
+      const sc = document.querySelector(".reader-scroll") as HTMLElement | null;
+      if (!sc || scrollTarget.current == null) {
+        scrollAnimating.current = false;
+        return;
+      }
+      const cur = sc.scrollTop;
+      const diff = scrollTarget.current - cur;
+      if (Math.abs(diff) <= 1) {
+        sc.scrollTop = scrollTarget.current;
+        scrollAnimating.current = false;
+        return;
+      }
+      sc.scrollTop = cur + diff * LERP;
+      scrollRaf.current = requestAnimationFrame(tick);
+    };
+
+    const page = (dir: 1 | -1) => {
+      const sc = document.querySelector(".reader-scroll") as HTMLElement | null;
+      if (!sc) return;
+      const max = sc.scrollHeight - sc.clientHeight;
+      const step = sc.clientHeight * STEP;
+      // 애니메이션 중이 아니면 현재 위치로 재동기화(수동 스크롤 반영), 진행 중이면 목표에 누적
+      const base = scrollAnimating.current ? scrollTarget.current ?? sc.scrollTop : sc.scrollTop;
+      scrollTarget.current = Math.max(0, Math.min(base + dir * step, max));
+      if (!scrollAnimating.current) {
+        scrollAnimating.current = true;
+        scrollRaf.current = requestAnimationFrame(tick);
+      }
+    };
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+      if (e.repeat) return; // 누르고 있기=1회(연타로 누적)
+      if (e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return; // 선택/단축키 보존
+      if (isEditableTarget(e.target)) return;
+      e.preventDefault();
+      page(e.key === "ArrowRight" ? 1 : -1);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      if (scrollRaf.current != null) cancelAnimationFrame(scrollRaf.current);
+      scrollAnimating.current = false;
+      scrollTarget.current = null;
+    };
+  }, [doc, settingsOpen, shortcutsOpen]);
 
   function refreshDocs() {
     window.paperAPI?.listDocs().then(setDocs).catch(() => setDocs([]));
@@ -127,6 +250,7 @@ export function App() {
   const cssVars = toCssVars(typography) as CSSProperties;
   const footnotes = useMemo(() => (doc ? buildFootnotes(doc.blocks) : null), [doc]);
   const frontMatter = useMemo(() => (doc ? buildFrontMatter(doc.blocks) : null), [doc]);
+  const crossRefIndex = useMemo(() => (doc ? buildCrossRefIndex(doc.blocks) : new Map()), [doc]);
 
   const dropProps = {
     onDragOver: (e: React.DragEvent) => { e.preventDefault(); setDragging(true); },
@@ -139,15 +263,51 @@ export function App() {
       {doc ? (
         <div className="reader-root" {...dropProps}>
           <header className="reader-bar">
-            <button className="back-btn" onClick={() => { openDocId.current = null; setDoc(null); }}>← 라이브러리</button>
+            <button className="back-btn" onClick={() => { openDocId.current = null; setDoc(null); setInspect(false); setHlPanel(false); setSectionPanel(false); setFocusMode(false); }}>← 라이브러리</button>
             <span className="reader-title">{doc.title ?? doc.doc_id}</span>
             {openSummary?.state === "extracting" && (
               <span className="extract-badge">추출 중 {openSummary.pages_done}/{openSummary.page_count}p</span>
             )}
+            <button
+              className="icon-action reader-find"
+              onClick={() => window.dispatchEvent(new Event("galpi:find-open"))}
+              title="텍스트 검색 (⌘F)"
+              aria-label="검색"
+            >🔎</button>
+            <button
+              className={`icon-action reader-peek ${inspect ? "on" : ""}`}
+              onClick={() => setInspect((v) => !v)}
+              title="원본 대조 (검사 모드 토글 · 또는 ⌥ 누른 채 클릭)"
+              aria-label="원본 대조"
+              aria-pressed={inspect}
+            >🔍</button>
+            <button
+              className={`icon-action reader-hl ${hlPanel ? "on" : ""}`}
+              onClick={() => setHlPanel((v) => !v)}
+              title="형광펜 (드래그 선택 → 색 지정 · 목록 보기)"
+              aria-label="형광펜"
+              aria-pressed={hlPanel}
+            >🖊</button>
+            <button
+              className={`icon-action reader-focus ${focusMode ? "on" : ""}`}
+              onClick={() => setFocusMode((v) => !v)}
+              title="포커스 모드 (현재 문단만 또렷 · F)"
+              aria-label="포커스 모드"
+              aria-pressed={focusMode}
+            >◎</button>
+            <button
+              className={`icon-action reader-sections ${sectionPanel ? "on" : ""}`}
+              onClick={() => setSectionPanel((v) => !v)}
+              title="목차 (섹션 이동)"
+              aria-label="목차"
+              aria-pressed={sectionPanel}
+            >☰</button>
             <button className="icon-action reader-gear" onClick={() => setSettingsOpen(true)} title="읽기 설정" aria-label="설정">{GEAR}</button>
           </header>
           <div className="reader-body">
             <main className="reader-scroll">
+              <CrossRefContext.Provider value={{ index: crossRefIndex, docId: doc.doc_id }}>
+              <ReadingContext.Provider value={reading}>
               <FootnoteContext.Provider value={footnotes?.byLabel ?? new Map()}>
                 <article className="reader-content" style={cssVars}>
                   {doc.blocks.map((b) => {
@@ -179,14 +339,30 @@ export function App() {
                   )}
                 </article>
               </FootnoteContext.Provider>
+              </ReadingContext.Provider>
+              </CrossRefContext.Provider>
             </main>
+            <SectionRail
+              docId={doc.doc_id}
+              blockCount={doc.blocks.length}
+              panelOpen={sectionPanel}
+              onClose={() => setSectionPanel(false)}
+            />
           </div>
+          <FindBar docId={doc.doc_id} blockCount={doc.blocks.length} />
           <SelectionTranslate containerSel=".reader-content" />
+          <SourcePeek doc={doc} sticky={inspect} onExitSticky={() => setInspect(false)} />
+          <HighlightLayer doc={doc} panelOpen={hlPanel} onClosePanel={() => setHlPanel(false)} />
+          <FocusMode active={focusMode} docId={doc.doc_id} blockCount={doc.blocks.length} />
+          <JumpBackButton />
         </div>
       ) : (
         <div className="library-root" {...dropProps}>
           <header className="library-bar">
-            <h1>Paper Reader</h1>
+            <div className="library-brand">
+              <h1>갈피</h1>
+              <span className="library-tagline">읽던 곳에 갈피를 꽂아두세요</span>
+            </div>
             <div className="bar-actions">
               <button className="icon-action" onClick={refreshDocs} title="새로고침" aria-label="새로고침">↻</button>
               <button className="icon-action" onClick={() => setSettingsOpen(true)} title="읽기 설정" aria-label="설정">{GEAR}</button>
@@ -239,7 +415,13 @@ export function App() {
         </div>
       )}
       {toast && <div className="toast">{toast}</div>}
-      {settingsOpen && <TypographyPanel onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && (
+        <TypographyPanel
+          onClose={() => setSettingsOpen(false)}
+          onOpenShortcuts={() => setShortcutsOpen(true)}
+        />
+      )}
+      {shortcutsOpen && <ShortcutsPanel onClose={() => setShortcutsOpen(false)} />}
     </>
   );
 }

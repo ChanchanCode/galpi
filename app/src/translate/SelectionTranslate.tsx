@@ -2,6 +2,8 @@
 // 본문에서 텍스트 선택 후 T 키 또는 우클릭 → 팝오버에 번역.
 // (선택할 때마다 뜨던 자동 버튼은 사용자 요청으로 제거. §8 형광펜과 선택 충돌 방지)
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useStore } from "../store/useStore";
+import { isEditableTarget, matchCombo } from "../keys/keymap";
 
 interface Anchor {
   x: number;
@@ -10,6 +12,7 @@ interface Anchor {
 }
 
 export function SelectionTranslate({ containerSel }: { containerSel: string }) {
+  const translateCombo = useStore((s) => s.keymap.translate);
   const [anchor, setAnchor] = useState<Anchor | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -45,13 +48,12 @@ export function SelectionTranslate({ containerSel }: { containerSel: string }) {
     setResult(null);
   }, []);
 
-  // 단축키 T: 현재 선택 번역 / Esc: 닫기
+  // 단축키(기본 T): 현재 선택 번역 / Esc: 닫기
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") return close();
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-      if ((e.key === "t" || e.key === "T") && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      if (isEditableTarget(e.target)) return;
+      if (matchCombo(e, translateCombo)) {
         const a = getSelectionInContainer();
         if (a) {
           e.preventDefault();
@@ -61,7 +63,7 @@ export function SelectionTranslate({ containerSel }: { containerSel: string }) {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [getSelectionInContainer, translate, close]);
+  }, [getSelectionInContainer, translate, close, translateCombo]);
 
   // 우클릭: 선택이 있으면 번역(기본 컨텍스트 메뉴 대신)
   useEffect(() => {

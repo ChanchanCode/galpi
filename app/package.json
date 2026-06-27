@@ -35,20 +35,44 @@
   },
   "build": {
     "appId": "com.paperreader.app",
-    "productName": "Paper Reader",
+    "productName": "갈피",
     "directories": {
       "output": "release"
     },
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
     "files": [
       "dist/**/*",
       "dist-electron/**/*"
     ],
+    "extraResources": [
+      {
+        "from": "../pipeline",
+        "to": "pipeline",
+        "filter": [
+          "*.py",
+          "requirements.txt",
+          "*.sh"
+        ]
+      }
+    ],
     "mac": {
-      "target": "dmg",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": "arm64"
+        }
+      ],
       "category": "public.app-category.productivity"
     },
     "win": {
       "target": "nsis"
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "ChanchanCode",
+        "repo": "galpi"
+      }
+    ]
   }
 }

@@ -1,0 +1,28 @@
+# 태그(v*) 푸시 시 macOS(Apple Silicon) .dmg 빌드 → GitHub Release 업로드.
+# 서명/공증은 하지 않음(무료). 친구는 받은 .dmg 를 Gatekeeper 우회로 한 번 열면 됨.
+# ⚠️ 친구가 다운로드/업데이트 확인을 하려면 이 저장소(또는 릴리스)가 public 이어야 함.
+name: release
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  mac:
+    runs-on: macos-14 # Apple Silicon 러너 → arm64 dmg
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm ci
+      - run: npm run build
+      - run: npx electron-builder --mac --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 미서명 빌드 — 자동 서명 탐색 끔(러너에 인증서 없음)
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"

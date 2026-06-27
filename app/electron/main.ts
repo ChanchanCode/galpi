@@ -1,6 +1,6 @@
 // Electron main process — 파일 IO, 메뉴, 문서 데이터 접근 (명세 §12, §10).
 // 경로는 app.getPath('userData') 로 OS-중립 (macOS/Windows 양쪽 동작).
-import { app, BrowserWindow, ipcMain, protocol, dialog, net } from "electron";
+import { app, BrowserWindow, ipcMain, protocol, dialog, net, shell } from "electron";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { pathToFileURL } from "node:url";
@@ -9,13 +9,34 @@ import { spawn } from "node:child_process";
 
 const isDev = !app.isPackaged;
 
-// 파이프라인(Python) 위치 — 드래그-드롭 추출에 사용. dev: repo/pipeline.
-// 환경변수로 재정의 가능(패키징 시 별도 설정).
-function pipelineDir(): string {
-  return process.env.PAPER_PIPELINE_DIR || path.resolve(__dirname, "../../pipeline");
+// 배포용: 친구가 공개 릴리스에서 업데이트를 받아볼 GitHub 저장소.
+const RELEASES_REPO = "ChanchanCode/galpi";
+
+function appSupportDir(): string {
+  return path.join(app.getPath("appData"), "PaperReader");
 }
-function venvPython(): string {
-  return process.env.PAPER_PYTHON || path.join(pipelineDir(), ".venv", "bin", "python");
+function settingsPath(): string {
+  return path.join(appSupportDir(), "settings.json");
+}
+
+// 추출 파이프라인 스크립트(extract.py 등) 위치.
+//   dev: repo/pipeline · 패키징: 앱 리소스에 동봉(extraResources) · 환경변수로 재정의 가능.
+function pipelineScriptsDir(): string {
+  if (process.env.PAPER_PIPELINE_DIR) return process.env.PAPER_PIPELINE_DIR;
+  return isDev ? path.resolve(__dirname, "../../pipeline") : path.join(process.resourcesPath, "pipeline");
+}
+
+// Python(venv) 위치. 셋업 스크립트가 만드는 기본 위치를 우선 탐색.
+//   env PAPER_PYTHON → settings.pythonPath → 기본 pyenv(앱지원폴더) → dev venv.
+async function resolvePython(): Promise<string> {
+  if (process.env.PAPER_PYTHON) return process.env.PAPER_PYTHON;
+  const s = (await readJson(settingsPath())) as { pythonPath?: string } | null;
+  if (s?.pythonPath && existsSync(s.pythonPath)) return s.pythonPath;
+  const def = path.join(appSupportDir(), "pyenv", "bin", "python");
+  if (existsSync(def)) return def;
+  const dev = path.resolve(__dirname, "../../pipeline/.venv/bin/python");
+  if (existsSync(dev)) return dev;
+  return def; // 없으면 기본 경로 반환(상태/에러 메시지에 표시)
 }
 
 // paper:// 를 표준·보안 스킴으로 등록 (net.fetch/이미지 로딩 허용). app ready 이전 필수.
@@ -28,7 +49,7 @@ protocol.registerSchemesAsPrivileged([
 // macOS: ~/Library/Application Support/PaperReader/docs
 function docsRoot(): string {
   // app.getPath('userData') = ~/Library/Application Support/<appName>.
-  // productName 이 "Paper Reader" 라 userData 가 다를 수 있으므로 PaperReader 로 고정.
+  // productName("갈피")과 무관하게 데이터 폴더는 PaperReader 로 고정(기존 문서/설정 호환).
   const base = path.join(app.getPath("appData"), "PaperReader");
   return path.join(base, "docs");
 }
@@ -194,9 +215,7 @@ async function startDocsWatcher() {
 // ── 번역: Gemini API (클라우드, 사용자 본인 무료 키) ───────────────────────
 // 키는 전역 settings.json 의 translation.apiKey 에 로컬 저장(앱이 키를 생성/전송하지 않음).
 // ⚠️ 선택 텍스트가 Google 로 전송됨 — 미공개 논문이면 주의(설정에서 끄거나 키 미입력).
-function settingsPath(): string {
-  return path.join(app.getPath("appData"), "PaperReader", "settings.json");
-}
+// (settingsPath() 는 상단에 정의)
 
 const TRANSLATE_PROMPT =
   "You are a translator for an English→Korean reader of finance/economics academic papers. " +
@@ -240,10 +259,14 @@ ipcMain.handle("translate:text", async (_e, text: string) => {
 // ── PDF 드래그-드롭 추출: extract.py 를 자식 프로세스로 실행 ──────────────
 // 추출은 document.json/status.json 을 점진 기록 → 와처가 라이브러리를 자동 갱신.
 ipcMain.handle("pipeline:extract", async (_e, pdfPath: string) => {
-  const py = venvPython();
-  const script = path.join(pipelineDir(), "extract.py");
+  const py = await resolvePython();
+  const scriptsDir = pipelineScriptsDir();
+  const script = path.join(scriptsDir, "extract.py");
   if (!existsSync(py)) {
-    return { error: `Python 환경 없음: ${py}\n(pipeline/.venv 설치 필요)` };
+    return {
+      error:
+        `추출 엔진이 설치되지 않았습니다.\n설정 → 추출 엔진에서 설치 안내를 확인하세요.\n(찾은 경로: ${py})`,
+    };
   }
   if (!existsSync(script)) {
     return { error: `extract.py 없음: ${script}` };
@@ -252,7 +275,7 @@ ipcMain.handle("pipeline:extract", async (_e, pdfPath: string) => {
     return { error: "PDF 파일만 추출할 수 있습니다." };
   }
   try {
-    const child = spawn(py, [script, pdfPath], { cwd: pipelineDir(), stdio: "ignore" });
+    const child = spawn(py, [script, pdfPath], { cwd: scriptsDir, stdio: "ignore" });
     let spawnErr: string | null = null;
     child.on("error", (e) => (spawnErr = String(e)));
     // 비동기 시작 — 진행/완료는 status.json 와처가 라이브러리에 반영.
@@ -262,6 +285,74 @@ ipcMain.handle("pipeline:extract", async (_e, pdfPath: string) => {
     return { error: String(err) };
   }
 });
+
+// ── 추출 엔진 상태 / 설정 (배포: 친구가 셋업 후 경로 확인·지정) ──────────
+ipcMain.handle("pipeline:status", async () => {
+  const python = await resolvePython();
+  const scriptsDir = pipelineScriptsDir();
+  const script = path.join(scriptsDir, "extract.py");
+  return {
+    python,
+    scriptsDir,
+    pythonOk: existsSync(python),
+    scriptOk: existsSync(script),
+    setupScript: path.join(scriptsDir, "setup-mac.sh"),
+  };
+});
+
+// Python(venv) 바이너리 직접 지정 — settings.pythonPath 에 저장.
+ipcMain.handle("pipeline:pickPython", async () => {
+  const res = await dialog.showOpenDialog({
+    title: "venv 의 python 실행파일 선택 (예: …/pyenv/bin/python)",
+    properties: ["openFile"],
+    defaultPath: path.join(appSupportDir(), "pyenv", "bin"),
+  });
+  if (res.canceled || !res.filePaths[0]) return { canceled: true };
+  const pythonPath = res.filePaths[0];
+  const prev = ((await readJson(settingsPath())) as Record<string, unknown> | null) ?? {};
+  await fs.mkdir(appSupportDir(), { recursive: true });
+  await fs.writeFile(settingsPath(), JSON.stringify({ ...prev, pythonPath }, null, 2), "utf8");
+  return { pythonPath, pythonOk: existsSync(pythonPath) };
+});
+
+// ── 앱 버전 / 업데이트 확인(수동) / 외부 링크 ────────────────────────────
+ipcMain.handle("app:version", () => app.getVersion());
+
+ipcMain.handle("app:openExternal", (_e, url: string) => {
+  if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+  return true;
+});
+
+// 공개 릴리스의 최신 태그와 현재 버전 비교(수동 업데이트 안내용).
+ipcMain.handle("app:checkUpdate", async () => {
+  const current = app.getVersion();
+  try {
+    const r = await fetch(`https://api.github.com/repos/${RELEASES_REPO}/releases/latest`, {
+      headers: { Accept: "application/vnd.github+json", "User-Agent": "PaperReader" },
+    });
+    if (!r.ok) {
+      return { current, error: `릴리스를 찾을 수 없습니다 (${r.status}). 저장소/릴리스가 공개인지 확인하세요.` };
+    }
+    const data = (await r.json()) as { tag_name?: string; html_url?: string };
+    const latest = (data.tag_name ?? "").replace(/^v/i, "");
+    const url = data.html_url ?? `https://github.com/${RELEASES_REPO}/releases`;
+    const hasUpdate = !!latest && cmpVersion(latest, current) > 0;
+    return { current, latest, url, hasUpdate };
+  } catch (err) {
+    return { current, error: String(err) };
+  }
+});
+
+// semver-lite 비교 (a>b → 1)
+function cmpVersion(a: string, b: string): number {
+  const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d) return d > 0 ? 1 : -1;
+  }
+  return 0;
+}
 
 app.whenReady().then(() => {
   registerDocProtocol();

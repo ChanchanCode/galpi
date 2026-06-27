@@ -21,13 +21,14 @@
 html, body, #root { height: 100%; margin: 0; }
 body { background: var(--bg); color: var(--fg); font-family: var(--font-family); }
 
-/* 테마 연동 스크롤바 (Electron=Chromium). track=배경, thumb=테마 색. */
-::-webkit-scrollbar { width: 12px; height: 12px; }
+/* 테마 연동 스크롤바 (Electron=Chromium). track=배경, thumb=테마 색. 집기 편하게 두껍게. */
+::-webkit-scrollbar { width: 16px; height: 16px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
 ::-webkit-scrollbar-thumb {
   background: var(--scrollbar-thumb, #c4c4c4);
-  border-radius: 7px;
-  border: 3px solid var(--bg); /* track 색 테두리로 thumb 가 얇아 보이게 */
+  border-radius: 9px;
+  border: 3px solid var(--bg); /* track 색 테두리 — thumb 본체 ~10px */
+  min-height: 44px;
 }
 ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 ::-webkit-scrollbar-corner { background: var(--bg); }
@@ -38,7 +39,9 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-family);
   max-width: 760px; margin: 0 auto; padding: 36px 24px 0;
   display: flex; align-items: center; justify-content: space-between;
 }
-.library-bar h1 { font-size: 2rem; margin: 0; }
+.library-brand { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+.library-bar h1 { font-size: 2rem; margin: 0; letter-spacing: -0.01em; }
+.library-tagline { font-size: 0.95rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .library-root > :not(.library-bar) { max-width: 760px; margin-left: auto; margin-right: auto; padding-left: 24px; padding-right: 24px; }
 .library-root .doc-list { padding-bottom: 48px; }
 .hint, .empty { color: var(--muted); }
@@ -54,7 +57,7 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-family);
 }
 .icon-action:hover { border-color: var(--accent); color: var(--accent); }
 .icon-action:active { background: color-mix(in srgb, var(--accent) 12%, transparent); }
-.reader-gear { margin-left: auto; }
+.reader-sections { margin-left: auto; } /* 우측 클러스터 시작: [목차][설정] */
 .doc-list { list-style: none; padding: 0; margin: 16px 0 0; }
 .doc-list li { margin: 10px 0; }
 .doc-card {
@@ -78,10 +81,10 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-family);
 .finish-toggle.on { background: var(--accent); color: #fff; border-color: var(--accent); }
 
 /* ── 리더 ── */
-.reader-root { display: flex; flex-direction: column; height: 100%; background: var(--bg); color: var(--fg); }
+.reader-root { display: flex; flex-direction: column; height: 100%; background: var(--bg); color: var(--fg); position: relative; }
 .reader-bar {
   display: flex; align-items: center; gap: 16px; padding: 10px 16px;
-  border-bottom: 1px solid var(--rule); background: var(--bg); position: sticky; top: 0; z-index: 10;
+  border-bottom: 1px solid var(--rule); background: var(--bg); position: sticky; top: 0; z-index: 45;
 }
 .back-btn, .bar-btn { background: transparent; border: 1px solid var(--rule); border-radius: 8px; padding: 6px 12px; color: inherit; cursor: pointer; }
 .bar-btn { margin-left: auto; }
@@ -89,7 +92,7 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-family);
 .reader-title { color: var(--muted); font-size: 0.9rem; }
 .extract-badge { margin-left: 12px; font-size: 0.75rem; color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: 2px 10px; }
 .extract-more { margin: 2em 0; text-align: center; color: var(--muted); font-size: 0.9em; }
-.reader-body { display: flex; flex: 1; min-height: 0; background: var(--bg); }
+.reader-body { display: flex; flex: 1; min-height: 0; background: var(--bg); position: relative; }
 .reader-scroll { overflow-y: auto; flex: 1; background: var(--bg); color: var(--fg); }
 
 /* ── 설정 모달 ── */
@@ -99,11 +102,11 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-family);
   display: flex; align-items: center; justify-content: center; padding: 24px;
 }
 .typo-panel.modal {
-  width: 340px; max-width: 100%; max-height: 88vh; overflow-y: auto;
+  width: 560px; max-width: 92vw; max-height: 88vh; overflow-y: auto;
   background: var(--bg); color: var(--fg);
   border: 1px solid var(--rule); border-radius: 14px;
   box-shadow: 0 16px 48px rgba(0,0,0,0.4);
-  padding: 8px 18px 24px;
+  padding: 8px 24px 24px;
 }
 .typo-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 0 12px; position: sticky; top: 0; background: var(--bg); z-index: 1; }
 .icon-btn { background: transparent; border: none; font-size: 1.4rem; color: var(--muted); cursor: pointer; line-height: 1; }
@@ -170,6 +173,297 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-family);
 .sel-engine { font-size: 0.72rem; color: var(--muted); }
 .sel-close { background: transparent; border: 1px solid var(--rule); border-radius: 6px; padding: 3px 10px; color: var(--fg); cursor: pointer; font-size: 0.78rem; }
 
+/* ── 원본 대조 Source Peek (§9) ── */
+/* 검사 모드: 커서 돋보기 + 블록 호버 아웃라인 */
+.reader-peek.on { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+body[data-inspect="on"] .reader-content [data-block-id] { cursor: zoom-in; }
+body[data-inspect="on"] .reader-content [data-block-id]:hover {
+  outline: 2px solid color-mix(in srgb, var(--accent) 65%, transparent);
+  outline-offset: 2px; border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+/* 원본 뷰어 창 — 자유 이동·크기조절·줌/팬 (일반 이미지 뷰어처럼) */
+.peek-window {
+  position: fixed; z-index: 60; display: flex; flex-direction: column;
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--rule); border-radius: 12px; overflow: hidden;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.42);
+}
+.peek-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  height: 38px; padding: 0 6px 0 12px; flex: none;
+  border-bottom: 1px solid var(--rule); cursor: grab; user-select: none;
+}
+.peek-head:active { cursor: grabbing; }
+.peek-title { font-size: 0.78rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.peek-tools { display: flex; align-items: center; gap: 2px; cursor: default; flex: none; }
+.peek-btn {
+  background: transparent; border: 1px solid transparent; border-radius: 7px;
+  color: var(--muted); cursor: pointer; font-size: 0.86rem; line-height: 1;
+  padding: 5px 8px; min-width: 26px;
+}
+.peek-btn:hover { border-color: var(--rule); color: var(--fg); }
+.peek-zoom { font-size: 0.72rem; color: var(--muted); min-width: 44px; text-align: center; font-variant-numeric: tabular-nums; }
+.peek-close:hover { color: var(--accent); border-color: var(--accent); }
+.peek-view {
+  position: relative; flex: 1; min-height: 0; overflow: hidden;
+  background: #fff; cursor: grab; touch-action: none;
+}
+.peek-view:active { cursor: grabbing; }
+.peek-view img { will-change: transform; user-select: none; -webkit-user-drag: none; }
+body.peek-dragging, body.peek-dragging * { cursor: grabbing !important; user-select: none !important; }
+/* 우하단 크기조절 핸들 */
+.peek-resize {
+  position: absolute; right: 0; bottom: 0; width: 18px; height: 18px;
+  cursor: nwse-resize; z-index: 2; opacity: 0.55;
+  background: linear-gradient(135deg,
+    transparent 0 46%, var(--muted) 46% 56%, transparent 56% 66%,
+    var(--muted) 66% 76%, transparent 76% 100%);
+}
+.peek-resize:hover { opacity: 1; }
+/* 디버그 오버레이 (§9.3-2) */
+.peek-debug { position: fixed; inset: 0; z-index: 110; background: rgba(0,0,0,0.78); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; }
+.peek-debug-bar { display: flex; align-items: center; gap: 12px; color: #eee; font-size: 0.85rem; }
+.peek-debug-bar button { background: #2a2a2c; color: #eee; border: 1px solid #555; border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+.peek-debug-bar button:disabled { opacity: 0.4; cursor: default; }
+.peek-debug-x { margin-left: 8px; }
+.peek-debug-stage { position: relative; box-shadow: 0 0 0 1px #000; }
+.peek-debug-stage img { display: block; }
+.peek-debug-box { position: absolute; border: 1px solid rgba(255,80,80,0.9); background: rgba(255,80,80,0.08); box-sizing: border-box; }
+.peek-debug-box[data-type="formula"] { border-color: rgba(80,160,255,0.95); background: rgba(80,160,255,0.1); }
+.peek-debug-box[data-type="table"] { border-color: rgba(80,220,120,0.95); background: rgba(80,220,120,0.1); }
+.peek-debug-box[data-type="figure"] { border-color: rgba(230,180,40,0.95); background: rgba(230,180,40,0.1); }
+.peek-debug-tag { position: absolute; top: -13px; left: -1px; font-size: 9px; line-height: 1; padding: 1px 3px; background: rgba(0,0,0,0.7); color: #fff; border-radius: 2px; white-space: nowrap; }
+
+/* ── 키워드 형광펜 Source Peek (§8) ── */
+/* 팔레트 — 테마별로 약간 조정해 가독성 유지. fill=배경, underline=밑줄. */
+:root {
+  --hl-yellow: rgba(255, 224, 79, 0.55); --hl-green: rgba(124, 224, 134, 0.5);
+  --hl-blue: rgba(120, 188, 255, 0.5); --hl-pink: rgba(255, 150, 196, 0.5);
+  --hl-purple: rgba(196, 160, 255, 0.5);
+}
+[data-theme="dark"] {
+  --hl-yellow: rgba(214, 178, 40, 0.45); --hl-green: rgba(70, 170, 90, 0.45);
+  --hl-blue: rgba(70, 140, 220, 0.45); --hl-pink: rgba(210, 90, 150, 0.45);
+  --hl-purple: rgba(150, 110, 220, 0.45);
+}
+::highlight(hl-yellow-fill) { background-color: var(--hl-yellow); }
+::highlight(hl-green-fill)  { background-color: var(--hl-green); }
+::highlight(hl-blue-fill)   { background-color: var(--hl-blue); }
+::highlight(hl-pink-fill)   { background-color: var(--hl-pink); }
+::highlight(hl-purple-fill) { background-color: var(--hl-purple); }
+::highlight(hl-yellow-underline) { text-decoration: underline; text-decoration-color: var(--hl-yellow); text-decoration-thickness: 3px; }
+::highlight(hl-green-underline)  { text-decoration: underline; text-decoration-color: var(--hl-green); text-decoration-thickness: 3px; }
+::highlight(hl-blue-underline)   { text-decoration: underline; text-decoration-color: var(--hl-blue); text-decoration-thickness: 3px; }
+::highlight(hl-pink-underline)   { text-decoration: underline; text-decoration-color: var(--hl-pink); text-decoration-thickness: 3px; }
+::highlight(hl-purple-underline) { text-decoration: underline; text-decoration-color: var(--hl-purple); text-decoration-thickness: 3px; }
+
+/* 형광펜 적용 직후: 선택 파란 배경을 투명하게 → 형광펜 색이 가려지지 않음(선택 자체는 유지).
+   ::selection 은 커스텀 하이라이트 '위'에 그려지므로 이렇게 해야 색이 보인다. 다음 드래그/클릭에 복원. */
+body[data-hl-dim="on"] .reader-content ::selection { background: transparent; }
+
+/* 스와치 공통 */
+.hl-swatch { width: 22px; height: 22px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12); }
+.hl-swatch.sm { width: 16px; height: 16px; }
+.hl-swatch.active { border-color: var(--fg); }
+.hl-swatch.hl-yellow { background: var(--hl-yellow); }
+.hl-swatch.hl-green  { background: var(--hl-green); }
+.hl-swatch.hl-blue   { background: var(--hl-blue); }
+.hl-swatch.hl-pink   { background: var(--hl-pink); }
+.hl-swatch.hl-purple { background: var(--hl-purple); }
+
+/* 형광펜 상태 알림(탭/홀드 결과) — 본문 위가 아니라 화면 하단 중앙 작은 알약 */
+.hl-status {
+  position: fixed; left: 50%; bottom: 64px; transform: translateX(-50%); z-index: 56;
+  background: var(--fg); color: var(--bg);
+  padding: 6px 14px; border-radius: 999px; font-size: 0.82rem;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.3); pointer-events: none;
+  animation: hl-status-in 0.12s ease-out;
+}
+@keyframes hl-status-in { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+/* "원래 위치로" 돌아가기 버튼 — 점프 후 떠 있다가 도착지가 화면 밖이면 숨김(Cmd+Z 대체) */
+.jump-back {
+  position: fixed; left: 24px; bottom: 24px; z-index: 58;
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--fg); color: var(--bg); border: none;
+  border-radius: 999px; padding: 8px 16px; font-size: 0.84rem; cursor: pointer;
+  box-shadow: 0 6px 22px rgba(0,0,0,0.32);
+  animation: jb-in 0.14s ease-out;
+}
+.jump-back:hover { opacity: 0.9; }
+@keyframes jb-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+/* 관리 패널 (§8.4) */
+.reader-hl.on { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.hl-panel {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 300px; z-index: 40;
+  background: var(--bg); color: var(--fg); border-left: 1px solid var(--rule);
+  box-shadow: -6px 0 24px rgba(0,0,0,0.18); display: flex; flex-direction: column;
+}
+.hl-panel-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--rule); font-weight: 600; }
+.hl-empty { padding: 16px 14px; color: var(--muted); font-size: 0.86rem; line-height: 1.5; }
+.hl-list { list-style: none; margin: 0; padding: 6px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.hl-row { border: 1px solid var(--rule); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 7px; }
+.hl-row-top { display: flex; align-items: flex-start; gap: 6px; }
+.hl-jump { flex: 1; text-align: left; background: transparent; border: none; color: var(--fg); cursor: pointer; display: flex; align-items: baseline; gap: 6px; padding: 0; min-width: 0; }
+.hl-text { font-size: 0.86rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.hl-jump:hover .hl-text { color: var(--accent); }
+.hl-count { font-size: 0.72rem; color: var(--muted); background: color-mix(in srgb, var(--fg) 8%, transparent); border-radius: 999px; padding: 1px 7px; flex-shrink: 0; }
+.hl-del { background: transparent; border: none; cursor: pointer; opacity: 0.6; font-size: 0.85rem; }
+.hl-del:hover { opacity: 1; }
+.hl-row-ctrls { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.hl-colors { display: flex; gap: 5px; }
+.hl-style-btn { font-size: 0.74rem; border: 1px solid var(--rule); border-radius: 6px; background: transparent; color: var(--muted); padding: 2px 8px; cursor: pointer; }
+.hl-style-btn.on { border-color: var(--accent); color: var(--accent); }
+.hl-label { font-size: 0.78rem; padding: 4px 7px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--fg); }
+
+/* ── 텍스트 검색 (Cmd+F) ── */
+/* 검색 매칭 하이라이트 — 형광펜(hl-*)과 다른 키라 서로 간섭 없음. 현재 매칭은 강조색. */
+::highlight(search-hit) { background-color: rgba(255, 213, 0, 0.42); }
+::highlight(search-current) { background-color: var(--accent); color: #fff; }
+[data-theme="dark"] ::highlight(search-hit) { background-color: rgba(214, 178, 40, 0.4); }
+
+.find-bar {
+  position: fixed; top: 60px; right: 20px; z-index: 70;
+  display: flex; align-items: center; gap: 4px;
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--rule); border-radius: 10px; padding: 5px 6px;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.28);
+}
+.find-input {
+  border: none; background: transparent; color: var(--fg);
+  font-size: 0.9rem; padding: 4px 6px; width: 180px; outline: none;
+}
+.find-count { font-size: 0.76rem; color: var(--muted); min-width: 40px; text-align: center; }
+.find-toggle, .find-nav, .find-close {
+  background: transparent; border: 1px solid transparent; border-radius: 7px;
+  color: var(--muted); cursor: pointer; font-size: 0.82rem; padding: 4px 7px; line-height: 1;
+}
+.find-toggle:hover, .find-nav:hover, .find-close:hover { border-color: var(--rule); color: var(--fg); }
+.find-toggle.on { border-color: var(--accent); color: var(--accent); }
+.find-nav:disabled { opacity: 0.35; cursor: default; }
+
+/* ── 섹션 이동: 스크롤 옆 위치 눈금(고정) + 버튼으로 여는 목차 패널 ── */
+/* 위치 눈금 — 스크롤바(16px) 바로 왼쪽 얇은 띠. 항상 표시(떴다 사라지지 않음), 시각 전용. */
+.section-minimap { position: absolute; top: 0; right: 18px; bottom: 0; width: 9px; z-index: 35; pointer-events: none; }
+.section-progress {
+  position: absolute; right: 0; width: 9px; height: 2px;
+  background: color-mix(in srgb, var(--accent) 60%, transparent);
+  transform: translateY(-1px); transition: top 0.08s linear;
+}
+.section-tick {
+  position: absolute; right: 0; width: 7px; height: 2px; border-radius: 1px;
+  background: var(--scrollbar-thumb, #c4c4c4); transform: translateY(-1px);
+}
+.section-tick.lvl-1 { width: 9px; }
+.section-tick.lvl-3 { width: 5px; opacity: 0.6; }
+.section-tick.active { background: var(--accent); width: 9px; height: 3px; }
+
+/* 목차 사이드 패널 (형광펜 패널과 동일 패턴) */
+.reader-sections.on { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.section-panel {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 300px; z-index: 40;
+  background: var(--bg); color: var(--fg); border-left: 1px solid var(--rule);
+  box-shadow: -6px 0 24px rgba(0,0,0,0.18); display: flex; flex-direction: column;
+}
+.section-panel-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--rule); font-weight: 600; }
+.section-empty { padding: 16px 14px; color: var(--muted); font-size: 0.86rem; line-height: 1.5; }
+.section-panel-list { list-style: none; margin: 0; padding: 6px; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
+.section-item {
+  width: 100%; text-align: left; background: transparent; border: none; border-radius: 7px;
+  color: var(--fg); cursor: pointer; font-size: 0.88rem; line-height: 1.35;
+  padding: 8px 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.section-item.lvl-1 { font-weight: 600; padding-left: 10px; }
+.section-item.lvl-2 { padding-left: 24px; }
+.section-item.lvl-3 { padding-left: 38px; color: var(--muted); font-size: 0.84rem; }
+.section-item:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.section-item.active { color: var(--accent); font-weight: 600; background: color-mix(in srgb, var(--accent) 8%, transparent); }
+
+/* ── 단축키 설정 창 ── */
+.typo-panel.modal.keys-panel { width: 420px; }
+.keys-list { list-style: none; margin: 6px 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.keys-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 8px 2px; border-bottom: 1px solid var(--rule);
+}
+.keys-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.keys-label { font-size: 0.9rem; font-weight: 600; }
+.keys-hint { font-size: 0.74rem; color: var(--muted); line-height: 1.35; }
+.keys-bind {
+  flex: none; min-width: 64px; text-align: center;
+  border: 1px solid var(--rule); border-radius: 8px; background: transparent; color: var(--fg);
+  padding: 6px 10px; cursor: pointer; font-size: 0.84rem;
+}
+.keys-bind:hover { border-color: var(--accent); }
+.keys-bind.recording { border-color: var(--accent); color: var(--accent); border-style: dashed; }
+.keys-bind.dup { border-color: #e0683a; color: #e0683a; }
+
+/* ── 설정 컨트롤: 2단 그리드 + 슬라이더 + 증감 버튼 ── */
+.set-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 22px; }
+@media (max-width: 520px) { .set-grid { grid-template-columns: 1fr; } }
+.set-ctrl { display: flex; flex-direction: column; gap: 7px; }
+.set-ctrl-top { display: flex; justify-content: space-between; align-items: baseline; font-size: 0.82rem; color: var(--muted); }
+.set-ctrl-top em { font-style: normal; color: var(--fg); font-variant-numeric: tabular-nums; }
+.set-ctrl-row { display: flex; align-items: center; gap: 10px; }
+.step-btn {
+  flex: none; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--rule); border-radius: 8px; background: transparent; color: var(--fg);
+  font-size: 1.05rem; line-height: 1; cursor: pointer;
+}
+.step-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.step-btn:disabled { opacity: 0.32; cursor: default; }
+.set-ctrl-row input[type="range"] {
+  -webkit-appearance: none; appearance: none; flex: 1; height: 6px;
+  border-radius: 999px; background: var(--rule); cursor: pointer;
+}
+.set-ctrl-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 20px; height: 20px; border-radius: 50%;
+  background: var(--accent); border: 3px solid var(--bg); cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+}
+
+/* 글꼴 미리보기 줄 */
+.font-row { display: flex; align-items: center; gap: 12px; }
+.font-row .font-preview { flex: 1; margin: 0; }
+.font-row .link-btn { flex: none; white-space: nowrap; }
+.muted-inline { color: var(--muted); font-weight: 400; font-size: 0.92em; }
+.seg-btn.full { width: 100%; flex: none; }
+
+/* ── 프리셋 (통합) ── */
+.preset-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.preset-chips .seg-btn { flex: 0 0 auto; min-width: 0; padding: 6px 14px; }
+.set-save { display: flex; gap: 8px; margin-top: 4px; }
+.set-save input {
+  flex: 1; min-width: 0; padding: 7px 10px; border: 1px solid var(--rule);
+  border-radius: 8px; background: var(--bg); color: var(--fg); font-size: 0.85rem;
+}
+.set-save .seg-btn { flex: 0 0 auto; min-width: 56px; }
+
+/* 공유·불러오기·관리 — 접이식으로 감춤 */
+.set-advanced { margin-top: 2px; }
+.set-advanced > summary { cursor: pointer; color: var(--muted); font-size: 0.82rem; list-style: none; user-select: none; padding: 4px 0; }
+.set-advanced > summary::before { content: "▸ "; }
+.set-advanced[open] > summary::before { content: "▾ "; }
+.set-advanced-body { display: flex; flex-direction: column; gap: 10px; padding: 8px 0 2px; }
+.set-import { display: flex; gap: 8px; }
+.set-import input {
+  flex: 1; min-width: 0; padding: 7px 10px; border: 1px solid var(--rule);
+  border-radius: 8px; background: var(--bg); color: var(--fg); font-size: 0.85rem;
+}
+.set-import .seg-btn { flex: 0 0 auto; min-width: 64px; }
+.set-preset-manage { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.set-preset-manage li { display: flex; align-items: center; gap: 8px; }
+.set-preset-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.85rem; }
+.set-mini { flex: 0 0 auto; background: transparent; border: 1px solid var(--rule); border-radius: 7px; color: var(--muted); padding: 5px 10px; cursor: pointer; font-size: 0.76rem; }
+.set-mini:hover { border-color: var(--accent); color: var(--accent); }
+
+/* 배포: 버전/엔진 상태 행 */
+.dist-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.dist-row .seg-btn { flex: 0 0 auto; min-width: 0; padding: 6px 12px; }
+.dist-row .ctrl-label { margin: 0; }
+
 /* 수식 폴백 (§7) */
 .formula-fallback { display: inline-flex; align-items: center; gap: 6px; }
 .formula-warn { color: var(--accent); font-size: 0.8em; }
@@ -224,6 +518,54 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-family);
 .footnotes-list { margin: 6px 0 0; padding-left: 1.4em; color: var(--muted); font-size: 0.88em; }
 .footnotes-list li { margin: 6px 0; }
 .fn-list-label { color: var(--accent); font-weight: 600; margin-right: 6px; }
+
+/* ── 다크/세피아 수식 대비 (§11-12) — KaTeX 색을 테마 본문색에 맞춤 ── */
+.katex, .katex-display { color: var(--fg); }
+
+/* ── 포커스 모드 (§11-9) — 중앙 블록만 또렷 ── */
+.reader-focus.on { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+body[data-focus="on"] .reader-content > * { transition: opacity 0.25s ease; }
+body[data-focus="on"] .reader-content > *:not(.is-focus) { opacity: 0.26; }
+
+/* ── 상호참조 (§11-5/§11-7) — 마커 + 호버 프리뷰 + 라이트박스 ── */
+.refl {
+  color: var(--accent); cursor: pointer;
+  border-bottom: 1px dotted color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.refl:hover, .refl.on { background: color-mix(in srgb, var(--accent) 14%, transparent); border-radius: 3px; }
+/* 클릭 이동 후 도착 블록 잠깐 강조 */
+.ref-target-flash { animation: ref-flash 1.4s ease; border-radius: 4px; }
+@keyframes ref-flash {
+  0%, 18% { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+  100% { background: transparent; }
+}
+/* 프리뷰 팝오버 */
+.refl-pop {
+  position: fixed; z-index: 60; width: 360px; max-width: 86vw; max-height: 340px;
+  display: flex; flex-direction: column; overflow: hidden;
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--rule); border-radius: 12px;
+  box-shadow: 0 12px 34px rgba(0,0,0,0.32);
+}
+.refl-pop-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--rule); flex: none; }
+.refl-pop-title { font-size: 0.8rem; font-weight: 600; color: var(--muted); }
+.refl-pop-jump { background: transparent; border: 1px solid var(--rule); border-radius: 7px; color: var(--muted); font-size: 0.74rem; padding: 4px 9px; cursor: pointer; }
+.refl-pop-jump:hover { border-color: var(--accent); color: var(--accent); }
+.refl-pop-body { padding: 10px; overflow-y: auto; }
+.refl-text { margin: 0; font-size: 0.85rem; line-height: 1.6; }
+.refl-eq { font-size: 0.95em; overflow-x: auto; }
+
+/* Bionic Reading — 단어 앞부분 굵게 */
+.bionic { font-weight: 700; }
+
+/* 썸네일 + 라이트박스 (그림/표 프리뷰) */
+.figref-thumb { display: block; width: 100%; padding: 0; border: none; background: #fff; border-radius: 8px; overflow: hidden; cursor: zoom-in; margin-bottom: 8px; }
+.figref-thumb img { display: block; width: 100%; height: auto; max-height: 240px; object-fit: contain; background: #fff; }
+.figref-lightbox { position: fixed; inset: 0; z-index: 120; background: rgba(0,0,0,0.82); display: flex; align-items: center; justify-content: center; padding: 32px; }
+.figref-lightbox figure { margin: 0; max-width: 94vw; max-height: 92vh; display: flex; flex-direction: column; gap: 10px; background: #fff; padding: 14px; border-radius: 10px; overflow: auto; }
+.figref-lightbox img { max-width: 100%; max-height: 78vh; object-fit: contain; margin: 0 auto; }
+.figref-lightbox figcaption { font-size: 0.85rem; line-height: 1.55; color: #333; }
+.figref-lightbox-x { position: fixed; top: 18px; right: 22px; width: 40px; height: 40px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.4); background: rgba(0,0,0,0.4); color: #fff; font-size: 1.1rem; cursor: pointer; }
 
 /* ── 논문 앞부분(article-info) 접이식 ── */
 .frontmatter { margin: 1.2em 0 1.6em; border: 1px solid var(--rule); border-radius: 10px; padding: 4px 14px; }

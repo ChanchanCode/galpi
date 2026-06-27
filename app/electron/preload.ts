@@ -44,6 +44,25 @@ const api = {
   // 읽기 상태 부분 갱신 (완독 토글 / 최근 읽음 기록)
   updateReading: (docId: string, patch: Record<string, unknown>): Promise<unknown> =>
     ipcRenderer.invoke("reading:update", docId, patch),
+  // 배포: 추출 엔진 상태/지정 + 버전/업데이트 확인 + 외부 링크
+  pipelineStatus: (): Promise<{
+    python: string;
+    scriptsDir: string;
+    pythonOk: boolean;
+    scriptOk: boolean;
+    setupScript: string;
+  }> => ipcRenderer.invoke("pipeline:status"),
+  pickPython: (): Promise<{ canceled?: boolean; pythonPath?: string; pythonOk?: boolean }> =>
+    ipcRenderer.invoke("pipeline:pickPython"),
+  appVersion: (): Promise<string> => ipcRenderer.invoke("app:version"),
+  checkUpdate: (): Promise<{
+    current: string;
+    latest?: string;
+    url?: string;
+    hasUpdate?: boolean;
+    error?: string;
+  }> => ipcRenderer.invoke("app:checkUpdate"),
+  openExternal: (url: string): Promise<boolean> => ipcRenderer.invoke("app:openExternal", url),
 };
 
 contextBridge.exposeInMainWorld("paperAPI", api);
