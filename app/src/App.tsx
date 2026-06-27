@@ -218,8 +218,12 @@ export function App() {
     setTimeout(() => setToast(null), 4000);
   }
 
+  // 라이브러리 내부 카드 이동 드래그(폴더 정리)는 PDF 추출 드롭과 구분한다.
+  const isInternalDrag = (e: React.DragEvent) => e.dataTransfer.types.includes("application/x-galpi-move");
+
   // 드래그-드롭 PDF → 추출 시작
   async function onDrop(e: React.DragEvent) {
+    if (isInternalDrag(e)) return;
     e.preventDefault();
     setDragging(false);
     const files = Array.from(e.dataTransfer.files).filter((f) => /\.pdf$/i.test(f.name));
@@ -239,7 +243,7 @@ export function App() {
   const crossRefIndex = useMemo(() => (doc ? buildCrossRefIndex(doc.blocks) : new Map()), [doc]);
 
   const dropProps = {
-    onDragOver: (e: React.DragEvent) => { e.preventDefault(); setDragging(true); },
+    onDragOver: (e: React.DragEvent) => { if (isInternalDrag(e)) return; e.preventDefault(); setDragging(true); },
     onDragLeave: (e: React.DragEvent) => { if (e.currentTarget === e.target) setDragging(false); },
     onDrop,
   };
@@ -266,14 +270,12 @@ export function App() {
               title={`원본 대조 — 원본 PDF와 비교 · ${displayCombo(keymap.sourcePeek)} (또는 ⌥+클릭)`}
               aria-label="원본 대조"
               aria-pressed={inspect}
-            >🖼</button>
-            <button
-              className={`icon-action reader-hl ${hlPanel ? "on" : ""}`}
-              onClick={() => setHlPanel((v) => !v)}
-              title={`형광펜 — 선택 후 ${displayCombo(keymap.highlight)} (탭=색 순환, 꾹=제거) · 클릭=목록`}
-              aria-label="형광펜"
-              aria-pressed={hlPanel}
-            >🖊</button>
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="3" y="4.5" width="18" height="15" rx="2" />
+                <line x1="12" y1="4.5" x2="12" y2="19.5" />
+              </svg>
+            </button>
             <button
               className={`icon-action reader-focus ${focusMode !== "off" ? "on" : ""}`}
               onClick={cycleFocus}

@@ -36,24 +36,26 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-family);
 /* ── 라이브러리 ── */
 .library-root { min-height: 100%; background: var(--bg); color: var(--fg); }
 .library-bar {
-  max-width: 1000px; margin: 0 auto; padding: 32px 24px 0;
+  max-width: 1000px; margin: 0 auto; padding: 52px 24px 0;
   display: flex; align-items: center; justify-content: space-between;
 }
-.library-brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.library-brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
 .galpi-mark { display: block; border-radius: 22%; box-shadow: 0 2px 6px rgba(40,36,28,0.18); flex: none; }
-.library-bar h1 { font-size: 2rem; margin: 0; letter-spacing: -0.01em; }
+.library-bar h1 { font-size: 2.2rem; margin: 0; letter-spacing: -0.015em; }
 .hint { color: var(--muted); max-width: 1000px; margin: 8px auto 0; padding: 0 24px; }
 .empty { color: var(--muted); max-width: 1000px; margin: 24px auto; padding: 0 24px; }
 
 /* ── 파일탐색기형 라이브러리 (폴더 + 선택) ── */
-.lib-toolbar { max-width: 1000px; margin: 10px auto 0; padding: 0 24px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.lib-toolbar { max-width: 1000px; margin: 34px auto 0; padding: 0 24px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .lib-crumbs { display: flex; align-items: center; gap: 1px; flex-wrap: wrap; min-width: 0; }
-.lib-crumb { background: transparent; border: none; color: var(--muted); cursor: pointer; font-size: 0.95rem; padding: 4px 7px; border-radius: 6px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-back { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; margin-right: 4px; flex: none; background: transparent; border: 1px solid var(--rule); border-radius: 8px; color: var(--fg); cursor: pointer; font-size: 1.05rem; line-height: 1; }
+.lib-back:hover { border-color: var(--accent); color: var(--accent); }
+.lib-crumb { background: transparent; border: none; color: var(--muted); cursor: pointer; font-size: 1.05rem; font-weight: 500; padding: 5px 9px; border-radius: 7px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lib-crumb:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .lib-crumb-wrap { display: inline-flex; align-items: center; min-width: 0; }
 .lib-crumb-sep { color: var(--muted); opacity: 0.5; }
 .lib-actions { display: flex; gap: 6px; flex: none; }
-.text-btn { background: transparent; border: 1px solid var(--rule); border-radius: 8px; color: var(--fg); cursor: pointer; font-size: 0.85rem; padding: 6px 12px; }
+.text-btn { background: transparent; border: 1px solid var(--rule); border-radius: 9px; color: var(--fg); cursor: pointer; font-size: 0.9rem; padding: 8px 15px; }
 .text-btn:hover { border-color: var(--accent); color: var(--accent); }
 .text-btn.danger:hover { border-color: #d2674a; color: #d2674a; }
 .text-btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
@@ -63,19 +65,43 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-family);
 .lib-selcount { font-size: 0.9rem; color: var(--accent); font-weight: 600; }
 .lib-selacts { display: flex; gap: 6px; }
 
-.lib-grid { max-width: 1000px; margin: 16px auto 48px; padding: 0 24px; display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; align-items: start; }
+.lib-grid { max-width: 1000px; margin: 28px auto 64px; padding: 0 24px; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 18px; align-items: stretch; }
 
-.folder-card { position: relative; display: flex; align-items: center; gap: 10px; padding: 16px; border: 1px solid var(--rule); border-radius: 12px; background: transparent; color: var(--fg); cursor: pointer; text-align: left; transition: border-color 0.12s, background 0.12s; }
-.folder-card:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 5%, transparent); }
-.folder-icon { font-size: 1.25rem; line-height: 1; }
-.folder-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+/* 폴더 카드 — 문서 카드와 동일한 크기(세로 타일). */
+.folder-card { position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 18px 18px; min-height: 156px; border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--rule)); border-radius: 12px; background: color-mix(in srgb, var(--accent) 8%, transparent); color: var(--fg); cursor: pointer; text-align: left; transition: border-color 0.12s, background 0.12s; }
+.folder-card:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.folder-icon { font-size: 1.6rem; line-height: 1; }
+.folder-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 1.05rem; }
 .folder-count { font-size: 0.78rem; color: var(--muted); flex: none; }
 
 /* 그리드용 세로 문서 카드 */
-.lib-grid .doc-card { display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 14px 16px; min-height: 116px; }
+.lib-grid .doc-card { display: flex; flex-direction: column; align-items: stretch; gap: 10px; padding: 18px 18px; min-height: 156px; }
 .lib-grid .doc-main { flex: 1; }
-.lib-grid .doc-title { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+/* 제목은 항상 2줄 높이를 차지(짧은 제목도 같은 높이) → 카드 크기 통일 */
+.lib-grid .doc-title { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.3; min-height: 2.6em; }
 .lib-grid .finish-toggle { align-self: flex-start; }
+
+/* 드래그 이동 — 드롭 대상 강조 */
+.folder-card.drop-over, .lib-crumb.drop-over, .lib-back.drop-over {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.folder-card[draggable="true"], .doc-card[draggable="true"] { -webkit-user-drag: element; }
+
+/* 우클릭 컨텍스트 메뉴 */
+.ctx-backdrop { position: fixed; inset: 0; z-index: 120; }
+.ctx-menu {
+  position: fixed; z-index: 121; min-width: 150px;
+  background: var(--bg); border: 1px solid var(--rule); border-radius: 10px;
+  box-shadow: 0 12px 36px rgba(0,0,0,0.35); padding: 5px;
+  display: flex; flex-direction: column;
+}
+.ctx-item { display: block; width: 100%; text-align: left; background: transparent; border: none; border-radius: 7px; color: var(--fg); cursor: pointer; font-size: 0.88rem; padding: 8px 12px; }
+.ctx-item:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.ctx-item.danger { color: #d2674a; }
+.ctx-item.danger:hover { background: color-mix(in srgb, #d2674a 12%, transparent); }
+.ctx-sep { height: 1px; background: var(--rule); margin: 4px 2px; }
 
 /* 선택 체크 */
 .sel-check { position: absolute; top: 10px; right: 10px; width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--line-strong, var(--rule)); background: var(--bg); }
@@ -187,7 +213,14 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-family);
 .blk-footnote, .blk-reference { font-size: 0.85em; color: var(--muted); }
 .blk-figure { margin: 1.5em 0; text-align: center; }
 .blk-figure img, .table-image { max-width: 100%; height: auto; }
-.blk-formula { margin: 1.2em 0; text-align: center; font-size: calc(1em * var(--math-scale)); }
+.blk-formula {
+  margin: 1.2em 0; text-align: center; font-size: calc(1em * var(--math-scale));
+  /* 수식 영역을 '칼럼 ~ 칼럼+여백(최대 90vw)'으로 고정 폭으로 넓혀 가운데 정렬(breakout).
+     eq-body 가 이 폭을 채우므로 작은 수식엔 여유가 남아 슬라이더가 안 생기고,
+     칼럼보다 조금 넓은 수식은 좌우 여백을 끌어와 펼쳐진다. 정말 넓을 때만 가로 스크롤. */
+  width: clamp(100%, calc(100% + 280px), 90vw);
+  position: relative; left: 50%; transform: translateX(-50%);
+}
 /* 식 번호(\tag)를 수식과 분리: [좌 균형용][수식 가운데][우 번호]. 겹침 방지. */
 .eq-row { display: flex; align-items: center; gap: 8px; width: 100%; }
 .eq-body { flex: 1 1 auto; min-width: 0; overflow-x: auto; overflow-y: hidden; text-align: center; }
@@ -197,7 +230,14 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-family);
 .formula-inline { font-size: calc(1em * var(--math-scale)); }
 
 /* 표 */
-.table-wrap { margin: 1.5em 0; }
+/* 표도 칼럼을 넘으면 좌우 여백을 끌어와 화면 폭(90vw)까지 펼쳐 보여준다(breakout).
+   table-scroll 가 이 폭을 채우므로 작은 표엔 슬라이더가 안 생기고(표는 가운데 정렬),
+   화면 폭을 넘는 정말 큰 표일 때만 가로 스크롤. (이미지 폴백 .table-figure 는 영향 없음) */
+.table-wrap {
+  margin: 1.5em 0; text-align: center;
+  width: max(100%, 90vw);
+  position: relative; left: 50%; transform: translateX(-50%);
+}
 .table-scroll { overflow-x: auto; }
 .table-scroll table { border-collapse: collapse; margin: 0 auto; font-size: 0.9em; }
 .table-scroll th, .table-scroll td { border: 1px solid var(--rule); padding: 4px 8px; }
@@ -256,6 +296,14 @@ body[data-inspect="on"] .reader-content [data-block-id]:hover {
 }
 .peek-view:active { cursor: grabbing; }
 .peek-view img { will-change: transform; user-select: none; -webkit-user-drag: none; }
+/* 원본 창에서 현재 블록 위치를 형광펜처럼 표시(팬/줌 따라 이동) */
+.peek-hl {
+  position: absolute; pointer-events: none; border-radius: 2px;
+  background: var(--hl-yellow);
+  outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  outline-offset: -1px;
+  mix-blend-mode: multiply;
+}
 body.peek-dragging, body.peek-dragging * { cursor: grabbing !important; user-select: none !important; }
 /* 우하단 크기조절 핸들 */
 .peek-resize {
@@ -476,8 +524,17 @@ body[data-hl-dim="on"] .reader-content ::selection { background: transparent; }
 .muted-inline { color: var(--muted); font-weight: 400; font-size: 0.92em; }
 .seg-btn.full { width: 100%; flex: none; }
 
-/* AI 설정 탭 */
-.seg.tabs { margin: 0 0 4px; }
+/* 설정 상단 탭 — 옵션 버튼(pill)과 확실히 구분되는 밑줄형 탭 바 */
+.seg.tabs { gap: 4px; margin: 0 0 14px; border-bottom: 1.5px solid var(--rule); }
+.seg.tabs .seg-btn {
+  flex: 0 0 auto; min-width: 0;
+  border: none; border-radius: 0; background: transparent;
+  margin-bottom: -1.5px; padding: 9px 18px;
+  font-size: 0.98rem; font-weight: 600; color: var(--muted);
+  border-bottom: 2.5px solid transparent;
+}
+.seg.tabs .seg-btn:hover { color: var(--fg); background: transparent; border-bottom-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.seg.tabs .seg-btn.on { color: var(--accent); background: transparent; border-bottom-color: var(--accent); }
 .ai-model-row { display: flex; gap: 8px; align-items: center; }
 .ai-model-row select {
   flex: 1; min-width: 0; padding: 6px 9px; border: 1px solid var(--rule);
@@ -589,11 +646,21 @@ body[data-hl-dim="on"] .reader-content ::selection { background: transparent; }
 /* 문단 모드: 활성 블록만 또렷 */
 body[data-focus="paragraph"] .reader-content > * { transition: opacity 0.22s ease; }
 body[data-focus="paragraph"] .reader-content > *:not(.is-focus) { opacity: 0.24; }
-/* 문장 모드: 본문 전체 흐리게 + 활성 문장만 또렷(CSS Custom Highlight) */
-body[data-focus="sentence"] .reader-content { color: color-mix(in srgb, var(--fg) 24%, var(--bg)); transition: color 0.22s ease; }
+/* 문장 모드: 본문 전체 흐리게 + 활성 '문장'만 색 대비로 또렷(형광펜 배경 없음) */
+body[data-focus="sentence"] .reader-content { color: color-mix(in srgb, var(--fg) 26%, var(--bg)); transition: color 0.22s ease; }
 body[data-focus="sentence"] .reader-content ::highlight(focus-line) {
-  color: var(--fg); background-color: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--fg);
 }
+/* 색 상속만으론 안 흐려지는 요소 보강(문장 모드):
+   · 수식/그림/표 블록은 통째로 opacity 다운 → 가로 슬라이더까지 함께 흐려짐.
+   · 인라인 수식·상호참조(수식/그림 바로가기) 링크는 흐린 본문색을 따르게(활성 문장은 하이라이트로 또렷). */
+body[data-focus="sentence"] .reader-content .blk-formula,
+body[data-focus="sentence"] .reader-content .blk-figure,
+body[data-focus="sentence"] .reader-content .blk-table {
+  opacity: 0.3; transition: opacity 0.22s ease;
+}
+body[data-focus="sentence"] .reader-content .refl { color: inherit; border-bottom-color: transparent; }
+body[data-focus="sentence"] .reader-content .formula-inline .katex { color: inherit; }
 
 /* ── 상호참조 (§11-5/§11-7) — 마커 + 호버 프리뷰 + 라이트박스 ── */
 .refl {

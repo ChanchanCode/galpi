@@ -1,6 +1,6 @@
 // 파일탐색기형 라이브러리 — 중첩 폴더 + 다중 선택 + 이동/삭제/이름변경.
 // 폴더/배정/이름은 library.json(메타)에만 저장. 문서 파일은 docs:delete 로만 영구 삭제.
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { DocSummary } from "../../electron/preload";
 import { GalpiMark } from "../ui/GalpiMark";
 
@@ -47,7 +47,10 @@ export function Library({ docs, onOpen, onToggleFinished, onRefresh, onOpenSetti
   const [selMode, setSelMode] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [prompt, setPrompt] = useState<{ kind: "newFolder" | "renameFolder" | "renameDoc"; id?: string; value: string } | null>(null);
-  const [moving, setMoving] = useState(false);
+  const [moveTarget, setMoveTarget] = useState<Set<string> | null>(null); // 폴더 선택 모달로 이동할 대상 키
+  const [menu, setMenu] = useState<{ x: number; y: number; keys: Set<string> } | null>(null); // 우클릭 메뉴
+  const [dragOver, setDragOver] = useState<string | null>(null); // 드롭 강조 대상(폴더 id / "home" / "back")
+  const dragKeys = useRef<Set<string> | null>(null); // 현재 드래그 중인 항목 키들
 
   useEffect(() => {
     window.paperAPI.loadLibrary().then(setLib);
@@ -106,37 +109,116 @@ export function Library({ docs, onOpen, onToggleFinished, onRefresh, onOpenSetti
   const renameDoc = (id: string, name: string) =>
     persist({ ...lib, docs: { ...lib.docs, [id]: { ...lib.docs[id], title: name.trim() || undefined } } });
 
-  const moveTo = (dest: string | null) => {
+  const keysToIds = (keys: Set<string>) => ({
+    docIds: [...keys].filter((k) => k.startsWith("d:")).map((k) => k.slice(2)),
+    folderIds: [...keys].filter((k) => k.startsWith("f:")).map((k) => k.slice(2)),
+  });
+
+  // 임의의 키 집합을 dest 폴더(null=홈)로 이동. 폴더는 자기 자신/하위로는 이동 불가.
+  const moveKeysTo = (keys: Set<string>, dest: string | null) => {
+    const { docIds, folderIds } = keysToIds(keys);
     const folders = lib.folders.map((f) =>
-      selFolderIds.includes(f.id) && !isDescendant(dest, f.id) ? { ...f, parentId: dest } : f,
+      folderIds.includes(f.id) && f.id !== dest && !isDescendant(dest, f.id) ? { ...f, parentId: dest } : f,
     );
     const docsMeta = { ...lib.docs };
-    for (const id of selDocIds) docsMeta[id] = { ...docsMeta[id], folder: dest };
+    for (const id of docIds) docsMeta[id] = { ...docsMeta[id], folder: dest };
     persist({ folders, docs: docsMeta });
-    setMoving(false);
+  };
+
+  // 폴더 선택 모달에서 목적지 선택
+  const moveTo = (dest: string | null) => {
+    if (moveTarget) moveKeysTo(moveTarget, dest);
+    setMoveTarget(null);
     exitSel();
   };
 
-  const deleteSelected = async () => {
+  const deleteKeys = async (keys: Set<string>) => {
+    const { docIds, folderIds } = keysToIds(keys);
+    if (!docIds.length && !folderIds.length) return;
     if (
       !window.confirm(
-        `문서 ${selDocIds.length}개, 폴더 ${selFolderIds.length}개를 삭제할까요?\n문서는 영구 삭제됩니다(폴더 내용은 상위로 이동).`,
+        `문서 ${docIds.length}개, 폴더 ${folderIds.length}개를 삭제할까요?\n문서는 영구 삭제됩니다(폴더 내용은 상위로 이동).`,
       )
     )
       return;
-    for (const id of selDocIds) await window.paperAPI.deleteDoc(id);
+    for (const id of docIds) await window.paperAPI.deleteDoc(id);
     let folders = lib.folders;
     const docsMeta = { ...lib.docs };
-    for (const fid of selFolderIds) {
+    for (const fid of folderIds) {
       const parent = folderById(fid)?.parentId ?? null;
       folders = folders.filter((f) => f.id !== fid).map((f) => (f.parentId === fid ? { ...f, parentId: parent } : f));
       for (const k of Object.keys(docsMeta)) if ((docsMeta[k].folder ?? null) === fid) docsMeta[k] = { ...docsMeta[k], folder: parent };
     }
-    for (const id of selDocIds) delete docsMeta[id];
+    for (const id of docIds) delete docsMeta[id];
     persist({ folders, docs: docsMeta });
     exitSel();
     onRefresh();
   };
+
+  // ── 우클릭 컨텍스트 메뉴 ────────────────────────────────────────
+  // 선택 모드에서 이미 선택된 항목을 우클릭하면 선택 전체가 대상.
+  const openMenu = (e: React.MouseEvent, key: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const keys = selMode && sel.has(key) ? new Set(sel) : new Set([key]);
+    setMenu({ x: e.clientX, y: e.clientY, keys });
+  };
+  const startRename = (keys: Set<string>) => {
+    const [only] = [...keys];
+    if (only?.startsWith("f:")) {
+      const id = only.slice(2);
+      setPrompt({ kind: "renameFolder", id, value: folderById(id)?.name ?? "" });
+    } else if (only?.startsWith("d:")) {
+      const id = only.slice(2);
+      const d = docs.find((x) => x.doc_id === id);
+      if (d) setPrompt({ kind: "renameDoc", id, value: docTitle(d) });
+    }
+  };
+
+  // ── 드래그 앤 드롭 이동 ─────────────────────────────────────────
+  const onDragStartCard = (e: React.DragEvent, key: string) => {
+    const keys = selMode && sel.has(key) ? new Set(sel) : new Set([key]);
+    dragKeys.current = keys;
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("application/x-galpi-move", "1"); // 내부 이동 표식(외부 PDF 드롭과 구분)
+  };
+  const endDrag = () => {
+    dragKeys.current = null;
+    setDragOver(null);
+  };
+  const canDrop = (dest: string | null): boolean => {
+    const keys = dragKeys.current;
+    if (!keys) return false;
+    for (const k of keys) {
+      if (!k.startsWith("f:")) continue;
+      const fid = k.slice(2);
+      if (fid === dest) return false; // 자기 자신
+      if (dest && isDescendant(dest, fid)) return false; // 자기 하위
+    }
+    return true;
+  };
+  // dest=목적지 폴더(null=홈), mark=강조 식별자
+  const dropTarget = (dest: string | null, mark: string) => ({
+    onDragOver: (e: React.DragEvent) => {
+      if (!dragKeys.current) return; // 내부 카드 드래그가 아니면 무시(PDF 등)
+      e.preventDefault();
+      e.stopPropagation();
+      const ok = canDrop(dest);
+      e.dataTransfer.dropEffect = ok ? "move" : "none";
+      setDragOver(ok ? mark : null);
+    },
+    onDragLeave: (e: React.DragEvent) => {
+      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragOver((d) => (d === mark ? null : d));
+    },
+    onDrop: (e: React.DragEvent) => {
+      if (!dragKeys.current) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (canDrop(dest)) moveKeysTo(dragKeys.current, dest);
+      endDrag();
+      if (selMode) exitSel();
+    },
+  });
 
   const submitPrompt = (value: string) => {
     if (!prompt) return;
@@ -170,11 +252,28 @@ export function Library({ docs, onOpen, onToggleFinished, onRefresh, onOpenSetti
       {/* 빵부스러기 + 우측 동작 */}
       <div className="lib-toolbar">
         <nav className="lib-crumbs">
-          <button className="lib-crumb" onClick={() => setCurrent(null)}>홈</button>
+          {current && (
+            <button
+              className={`lib-back ${dragOver === "back" ? "drop-over" : ""}`}
+              onClick={() => setCurrent(folderById(current)?.parentId ?? null)}
+              title="뒤로"
+              aria-label="뒤로"
+              {...dropTarget(folderById(current)?.parentId ?? null, "back")}
+            >←</button>
+          )}
+          <button
+            className={`lib-crumb ${dragOver === "home" ? "drop-over" : ""}`}
+            onClick={() => setCurrent(null)}
+            {...dropTarget(null, "home")}
+          >홈</button>
           {crumbs.map((f) => (
             <span key={f.id} className="lib-crumb-wrap">
               <span className="lib-crumb-sep">›</span>
-              <button className="lib-crumb" onClick={() => setCurrent(f.id)}>{f.name}</button>
+              <button
+                className={`lib-crumb ${dragOver === f.id ? "drop-over" : ""}`}
+                onClick={() => setCurrent(f.id)}
+                {...dropTarget(f.id, f.id)}
+              >{f.name}</button>
             </span>
           ))}
         </nav>
@@ -195,7 +294,7 @@ export function Library({ docs, onOpen, onToggleFinished, onRefresh, onOpenSetti
         <div className="lib-selbar">
           <span className="lib-selcount">{sel.size}개 선택</span>
           <div className="lib-selacts">
-            <button className="text-btn" onClick={() => setMoving(true)}>이동</button>
+            <button className="text-btn" onClick={() => setMoveTarget(new Set(sel))}>이동</button>
             {sel.size === 1 && (
               <button
                 className="text-btn"
@@ -207,7 +306,7 @@ export function Library({ docs, onOpen, onToggleFinished, onRefresh, onOpenSetti
                 이름 변경
               </button>
             )}
-            <button className="text-btn danger" onClick={deleteSelected}>삭제</button>
+            <button className="text-btn danger" onClick={() => deleteKeys(new Set(sel))}>삭제</button>
           </div>
         </div>
       )}
@@ -218,8 +317,13 @@ export function Library({ docs, onOpen, onToggleFinished, onRefresh, onOpenSetti
           return (
             <button
               key={f.id}
-              className={`folder-card ${selMode && sel.has(key) ? "selected" : ""}`}
+              className={`folder-card ${selMode && sel.has(key) ? "selected" : ""} ${dragOver === f.id ? "drop-over" : ""}`}
               onClick={() => onCardClick(key, () => setCurrent(f.id))}
+              onContextMenu={(e) => openMenu(e, key)}
+              draggable
+              onDragStart={(e) => onDragStartCard(e, key)}
+              onDragEnd={endDrag}
+              {...dropTarget(f.id, f.id)}
             >
               {selMode && <span className={`sel-check ${sel.has(key) ? "on" : ""}`} />}
               <span className="folder-icon">📁</span>
@@ -238,6 +342,10 @@ export function Library({ docs, onOpen, onToggleFinished, onRefresh, onOpenSetti
               key={d.doc_id}
               className={`doc-card ${d.finished ? "is-finished" : ""} ${selMode && sel.has(key) ? "selected" : ""}`}
               onClick={() => onCardClick(key, () => onOpen(d.doc_id))}
+              onContextMenu={(e) => openMenu(e, key)}
+              draggable
+              onDragStart={(e) => onDragStartCard(e, key)}
+              onDragEnd={endDrag}
             >
               {selMode && <span className={`sel-check ${sel.has(key) ? "on" : ""}`} />}
               <div className="doc-main">
@@ -277,13 +385,27 @@ export function Library({ docs, onOpen, onToggleFinished, onRefresh, onOpenSetti
           onCancel={() => setPrompt(null)}
         />
       )}
-      {moving && (
+      {moveTarget && (
         <FolderPickerModal
           folders={lib.folders}
-          disabledIds={selFolderIds}
+          disabledIds={[...moveTarget].filter((k) => k.startsWith("f:")).map((k) => k.slice(2))}
           onPick={moveTo}
-          onCancel={() => setMoving(false)}
+          onCancel={() => setMoveTarget(null)}
         />
+      )}
+
+      {menu && (
+        <>
+          <div className="ctx-backdrop" onClick={() => setMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMenu(null); }} />
+          <div className="ctx-menu" style={{ left: menu.x, top: menu.y }} onClick={(e) => e.stopPropagation()}>
+            <button className="ctx-item" onClick={() => { setMoveTarget(menu.keys); setMenu(null); }}>이동…</button>
+            {menu.keys.size === 1 && (
+              <button className="ctx-item" onClick={() => { startRename(menu.keys); setMenu(null); }}>이름 변경</button>
+            )}
+            <div className="ctx-sep" />
+            <button className="ctx-item danger" onClick={() => { const k = menu.keys; setMenu(null); void deleteKeys(k); }}>삭제</button>
+          </div>
+        </>
       )}
     </div>
   );

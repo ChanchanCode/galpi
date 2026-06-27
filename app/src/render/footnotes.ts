@@ -1,6 +1,9 @@
 // 각주 분리·매칭 (명세 §6.1 보강).
-// MinerU 가 footnote 로 잡은 블록 중 '<sup>라벨</sup> …' 로 시작하는 정의를
-// 본문 흐름에서 빼내고, 본문의 같은 <sup>라벨</sup> 참조를 클릭형 팝오버로 연결한다.
+// '<sup>라벨</sup> …' 로 시작하는 각주 정의를 본문 흐름에서 빼내고,
+// 본문의 같은 <sup>라벨</sup> 참조를 클릭형 팝오버로 연결한다.
+// ※ MinerU 가 각주를 footnote 가 아니라 list/paragraph 로 오분류하는 경우가 많고(특히 긴 각주),
+//   한 블록에 여러 각주(<sup>1</sup>… <sup>2</sup>…)가 붙어 있기도 하다 → 블록 타입과 무관하게
+//   '선두 <sup>라벨</sup>' 신호로 잡고, 한 블록 안 여러 마커를 각각의 각주로 쪼갠다.
 import { createContext } from "react";
 import type { Block } from "../types";
 
@@ -31,6 +34,27 @@ function joinCont(prev: string, next: string): string {
   return a + glue + b;
 }
 
+// 한 블록 안의 각주 정의 마커들을 찾아 각각의 각주로 분할.
+// 정의 마커 = 문자열 시작 또는 공백 뒤의 <sup>라벨</sup> + 뒤따르는 공백
+// (본문 참조 마커는 'topic.<sup>2</sup>' 처럼 단어/문장부호에 '붙어' 있어 제외된다).
+function splitFootnoteDefs(text: string): Footnote[] {
+  const re = /(^|\s)<sup>([^<>\s]{1,6})<\/sup>\s+/g;
+  const marks: { label: string; markStart: number; bodyStart: number }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    marks.push({ label: m[2].trim(), markStart: m.index + m[1].length, bodyStart: re.lastIndex });
+  }
+  // 공백 없는 변형('<sup>1</sup>본문')도 최소 1개는 잡도록 폴백
+  if (!marks.length) {
+    const mm = text.match(SUP_LEAD);
+    return mm ? [{ label: mm[1].trim(), html: text.slice(mm[0].length).trim() }] : [];
+  }
+  return marks.map((mk, i) => ({
+    label: mk.label,
+    html: text.slice(mk.bodyStart, i + 1 < marks.length ? marks[i + 1].markStart : text.length).trim(),
+  }));
+}
+
 export function buildFootnotes(blocks: Block[]): FootnoteData {
   const byLabel = new Map<string, Footnote>();
   const pulled = new Set<string>();
@@ -41,21 +65,25 @@ export function buildFootnotes(blocks: Block[]): FootnoteData {
       current = null; // 섹션이 바뀌면 연속 병합 끊기
       continue;
     }
-    if (b.type === "footnote" && text) {
-      const m = text.match(SUP_LEAD);
-      if (m) {
-        const label = m[1].trim();
-        const html = text.slice(m[0].length).trim();
-        if (!byLabel.has(label)) byLabel.set(label, { label, html });
-        current = byLabel.get(label)!;
+    // 1) '선두 <sup>라벨</sup>' 로 시작하면 각주 정의 캐리어 — 타입(footnote/list/paragraph) 무관.
+    //    한 블록에 여러 각주가 붙어 있으면 마커 단위로 쪼개 모두 등록.
+    if (text && SUP_LEAD.test(text)) {
+      const defs = splitFootnoteDefs(text);
+      if (defs.length) {
+        for (const d of defs) if (!byLabel.has(d.label)) byLabel.set(d.label, d);
+        current = byLabel.get(defs[defs.length - 1].label) ?? null;
         pulled.add(b.id);
-      } else if (current) {
-        current.html = joinCont(current.html, text); // 마커 없는 연속분 → 병합
-        pulled.add(b.id);
+        continue;
       }
+    }
+    // 2) 마커 없는 각주 연속분(컬럼 절단으로 다음 블록에 이어진 경우) → 직전 각주에 병합.
+    //    오인 위험을 줄이려 footnote 타입에만 적용.
+    if (b.type === "footnote" && text && current) {
+      current.html = joinCont(current.html, text);
+      pulled.add(b.id);
       continue;
     }
-    // 출판사 footer 잡음은 숨기되, 연속 병합은 끊지 않음(각주 절반 사이에 끼어듦)
+    // 3) 출판사 footer 잡음은 숨기되, 연속 병합은 끊지 않음(각주 절반 사이에 끼어듦)
     if (b.type === "paragraph" && JUNK.some((re) => re.test(text.trim()))) {
       pulled.add(b.id);
     }

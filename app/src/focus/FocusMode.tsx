@@ -1,6 +1,6 @@
 // 포커스 모드 (§11-9, 확장) — 문단/문장 단위로 한 곳만 또렷, 나머지 흐리게.
 //  · 문단: 활성 블록만 또렷(나머지 opacity↓)
-//  · 문장: 본문 전체 흐리게 + 활성 문장만 CSS Custom Highlight 로 또렷
+//  · 문장: 본문 전체 흐리게 + 활성 '문장'만 색 대비로 또렷(형광펜 배경 없음)
 //  · ←/→ 로 이전/다음 단위로 포커스 이동 + 화면 가운데로 스크롤
 import { useEffect, useRef } from "react";
 import { splitSentences } from "../render/reading";
@@ -202,7 +202,10 @@ export function FocusMode({ mode, docId, blockCount }: Props) {
   useEffect(() => {
     if (mode === "off") return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+      // ↓/→ = 다음 단위, ↑/← = 이전 단위 (위아래 방향키도 좌우와 동일 동작)
+      const fwd = e.key === "ArrowRight" || e.key === "ArrowDown";
+      const back = e.key === "ArrowLeft" || e.key === "ArrowUp";
+      if (!fwd && !back) return;
       if (e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return;
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
@@ -213,7 +216,7 @@ export function FocusMode({ mode, docId, blockCount }: Props) {
       let cur = idxRef.current;
       // 현재 활성 단위가 화면 밖이면 가운데 기준으로 재설정
       if (cur < 0 || (scroller && !inView(rectOf(units[cur]), scroller))) cur = nearestIdx();
-      const next = Math.max(0, Math.min(units.length - 1, cur + (e.key === "ArrowRight" ? 1 : -1)));
+      const next = Math.max(0, Math.min(units.length - 1, cur + (fwd ? 1 : -1)));
       apply(next, true);
     };
     document.addEventListener("keydown", onKey);

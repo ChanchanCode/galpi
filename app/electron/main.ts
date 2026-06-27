@@ -81,6 +81,7 @@ function createWindow() {
   } else {
     win.loadFile(path.join(__dirname, "../dist/index.html"));
   }
+  return win;
 }
 
 // ── 문서 자산(이미지 등) 보안 프로토콜 ────────────────────────────────
@@ -564,8 +565,16 @@ ipcMain.handle("app:openExternal", (_e, url: string) => {
   return true;
 });
 
-// 공개 릴리스의 최신 태그와 현재 버전 비교(수동 업데이트 안내용).
-ipcMain.handle("app:checkUpdate", async () => {
+// 공개 릴리스의 최신 태그/에셋 조회. 수동 확인(설정)·실행 시 자동 확인 양쪽에서 재사용.
+interface ReleaseInfo {
+  current: string;
+  latest?: string;
+  url?: string; // 릴리스 페이지
+  dmgUrl?: string; // .dmg 에셋 직접 다운로드 URL
+  hasUpdate?: boolean;
+  error?: string;
+}
+async function fetchLatestRelease(): Promise<ReleaseInfo> {
   const current = app.getVersion();
   try {
     const r = await fetch(`https://api.github.com/repos/${RELEASES_REPO}/releases/latest`, {
@@ -574,15 +583,70 @@ ipcMain.handle("app:checkUpdate", async () => {
     if (!r.ok) {
       return { current, error: `릴리스를 찾을 수 없습니다 (${r.status}). 저장소/릴리스가 공개인지 확인하세요.` };
     }
-    const data = (await r.json()) as { tag_name?: string; html_url?: string };
+    const data = (await r.json()) as {
+      tag_name?: string;
+      html_url?: string;
+      assets?: { name: string; browser_download_url: string }[];
+    };
     const latest = (data.tag_name ?? "").replace(/^v/i, "");
     const url = data.html_url ?? `https://github.com/${RELEASES_REPO}/releases`;
+    const dmgUrl = (data.assets ?? []).find((a) => /\.dmg$/i.test(a.name))?.browser_download_url;
     const hasUpdate = !!latest && cmpVersion(latest, current) > 0;
-    return { current, latest, url, hasUpdate };
+    return { current, latest, url, dmgUrl, hasUpdate };
   } catch (err) {
     return { current, error: String(err) };
   }
-});
+}
+ipcMain.handle("app:checkUpdate", fetchLatestRelease);
+
+// .dmg 를 다운로드 폴더로 받아 경로 반환.
+async function downloadDmg(url: string): Promise<string> {
+  const name = url.split("/").pop() || "Galpi-update.dmg";
+  const dest = path.join(app.getPath("downloads"), name);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`다운로드 실패 (${res.status})`);
+  await fs.writeFile(dest, Buffer.from(await res.arrayBuffer()));
+  return dest;
+}
+
+// 실행 시 자동 업데이트 확인 → 있으면 받아서 dmg 를 열어 교체 안내.
+// (코드 서명이 없어 조용한 자동설치는 불가 → 받은 dmg 에서 앱을 드래그해 덮어쓰는 방식.)
+let launchUpdateChecked = false;
+async function checkUpdateOnLaunch(win: BrowserWindow) {
+  if (launchUpdateChecked) return;
+  launchUpdateChecked = true;
+  let info: ReleaseInfo;
+  try {
+    info = await fetchLatestRelease();
+  } catch {
+    return; // 네트워크 실패는 조용히 무시(실행 방해 금지)
+  }
+  if (!info.hasUpdate || !info.latest || win.isDestroyed()) return;
+  const { response } = await dialog.showMessageBox(win, {
+    type: "info",
+    buttons: ["지금 업데이트", "나중에"],
+    defaultId: 0,
+    cancelId: 1,
+    message: `새 버전 v${info.latest} 이(가) 있습니다.`,
+    detail: `현재 버전은 v${info.current} 입니다. 지금 받아서 설치할까요?`,
+  });
+  if (response !== 0) return;
+  try {
+    if (!info.dmgUrl) throw new Error("dmg 에셋을 찾을 수 없습니다.");
+    const dmg = await downloadDmg(info.dmgUrl);
+    await shell.openPath(dmg); // dmg 마운트 → Finder 창
+    if (!win.isDestroyed()) {
+      await dialog.showMessageBox(win, {
+        type: "info",
+        buttons: ["확인"],
+        message: "새 버전을 받았습니다.",
+        detail: "열린 디스크 이미지(갈피)에서 앱을 ‘응용 프로그램’ 폴더로 드래그해 덮어쓴 뒤, 갈피를 다시 실행하세요.",
+      });
+    }
+  } catch {
+    if (info.url) void shell.openExternal(info.url); // 실패 시 릴리스 페이지로 폴백
+  }
+}
 
 // semver-lite 비교 (a>b → 1)
 function cmpVersion(a: string, b: string): number {
@@ -602,8 +666,10 @@ app.whenReady().then(() => {
     if (!img.isEmpty()) app.dock.setIcon(img);
   }
   registerDocProtocol();
-  createWindow();
+  const win = createWindow();
   startDocsWatcher();
+  // 실행할 때마다 업데이트 확인(패키징 빌드만; dev 제외). UI 가 먼저 뜨도록 잠시 뒤.
+  if (!isDev) setTimeout(() => void checkUpdateOnLaunch(win), 2500);
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

@@ -14,14 +14,33 @@ echo " 설치 위치: $VENV"
 echo " ⚠️  의존성+모델로 5GB 이상 내려받습니다. 시간이 걸립니다."
 echo "──────────────────────────────────────────────"
 
-# 1) Python 3.12 확인 (없으면 Homebrew로 설치)
+# 1) Python 3.12 확인 (없으면 Homebrew로 설치, Homebrew 없으면 자동 설치)
 PY="$(command -v python3.12 || true)"
 if [ -z "$PY" ]; then
   echo "→ python3.12 가 없습니다. Homebrew로 설치를 시도합니다."
+
+  # 이미 설치돼 있지만 PATH 에 없을 수 있어 표준 경로 보강
   if ! command -v brew >/dev/null 2>&1; then
-    echo "✗ Homebrew가 필요합니다. https://brew.sh 에서 설치 후 다시 실행하세요."
-    exit 1
+    if [ -x /opt/homebrew/bin/brew ]; then eval "$(/opt/homebrew/bin/brew shellenv)"
+    elif [ -x /usr/local/bin/brew ]; then eval "$(/usr/local/bin/brew shellenv)"; fi
   fi
+
+  # 그래도 없으면 Homebrew 자동 설치
+  if ! command -v brew >/dev/null 2>&1; then
+    echo "→ Homebrew 가 없습니다. 자동 설치를 시작합니다."
+    echo "  (관리자 비밀번호 입력 창이 한 번 뜰 수 있습니다. 설치에 시간이 걸려요.)"
+    ME="$(whoami)"
+    # /opt/homebrew 를 먼저 만들고 소유권을 현재 사용자에게 → 이후 설치는 sudo 없이 진행(프롬프트 멈춤 방지).
+    # GUI 관리자 인증 1회(터미널 비번 입력이 불가한 앱 환경 대응).
+    osascript -e "do shell script \"mkdir -p /opt/homebrew && chown -R ${ME}:admin /opt/homebrew\" with administrator privileges" \
+      || { echo "✗ 관리자 권한 획득에 실패했습니다. https://brew.sh 안내대로 설치 후 다시 시도하세요."; exit 1; }
+    # 비대화식 설치(NONINTERACTIVE) — 위에서 디렉터리를 미리 만들어 sudo 불필요.
+    NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
+      || { echo "✗ Homebrew 설치 실패. 인터넷 연결을 확인하거나 https://brew.sh 에서 수동 설치 후 다시 시도하세요."; exit 1; }
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+    echo "→ Homebrew 설치 완료: $(brew --version | head -1)"
+  fi
+
   brew install python@3.12
   PY="$(brew --prefix)/bin/python3.12"
 fi

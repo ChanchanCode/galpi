@@ -94,6 +94,12 @@ export function SourcePeek({ doc, sticky, onExitSticky }: Props) {
     const onKey = (e: KeyboardEvent) => {
       if (isEditableTarget(e.target)) return;
       if (!matchCombo(e, peekCombo)) return;
+      // 이미 원본 창이 열려 있으면 같은 키로 바로 닫기(토글)
+      if (target) {
+        e.preventDefault();
+        setTarget(null);
+        return;
+      }
       const content = document.querySelector(".reader-content") as HTMLElement | null;
       if (!content) return;
 
@@ -146,7 +152,7 @@ export function SourcePeek({ doc, sticky, onExitSticky }: Props) {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [peekCombo, blockById, pageByIndex]);
+  }, [peekCombo, blockById, pageByIndex, target]);
 
   // 검사 모드에서 블록 클릭 → 원본 crop 팝오버. (캡처 단계에서 선택/링크 동작 가로채기)
   useEffect(() => {
@@ -242,6 +248,15 @@ function CropPopover({
   const crop = cropRectPx(block, page);
   const imgUrl = window.paperAPI.assetUrl(docId, page.image);
   const viewportRef = useRef<HTMLDivElement>(null);
+
+  // 이 블록이 원본에서 차지하는 정확한 영역(이미지 픽셀) — 형광펜 표시용. bbox 없으면 생략.
+  const hlBox = (() => {
+    if (!block.bbox) return null;
+    const sx = page.image_width_px / page.width_pt;
+    const sy = page.image_height_px / page.height_pt;
+    const [x0, y0, x1, y1] = block.bbox;
+    return { x: x0 * sx, y: y0 * sy, w: (x1 - x0) * sx, h: (y1 - y0) * sy };
+  })();
 
   // 초기 창 위치/크기 — 클릭 지점 옆, 화면 안으로 클램프.
   const [win, setWin] = useState<WinState>(() => {
@@ -366,6 +381,17 @@ function CropPopover({
             transform: `translate(${view.ox}px, ${view.oy}px) scale(${view.scale})`,
           }}
         />
+        {hlBox && (
+          <div
+            className="peek-hl"
+            style={{
+              left: view.ox + hlBox.x * view.scale,
+              top: view.oy + hlBox.y * view.scale,
+              width: hlBox.w * view.scale,
+              height: hlBox.h * view.scale,
+            }}
+          />
+        )}
       </div>
       <div className="peek-resize" onPointerDown={(e) => startDrag("resize", e)} title="크기 조절" />
     </div>

@@ -38,7 +38,9 @@ export function bionicNodes(text: string, keyBase: string): ReactNode[] {
 }
 
 // ── 문장 경계 분할 (보수적 — 과분할 방지) ─────────────────────────
-// 약어/소수점/이니셜은 끊지 않고, "다음이 공백+대문자/숫자/여는기호"일 때만 문장 끝으로 본다.
+// 약어/소수점/이니셜은 끊지 않고, "다음이 (공백) +대문자/숫자/여는기호"일 때만 문장 끝으로 본다.
+// 공백은 선택(\s*): '문장 줄바꿈'으로 렌더된 본문은 문장 사이 공백이 제거되어 붙어 있으므로
+// (예: "conducted.Scientists") 공백 없이도 경계를 잡아야 포커스 '문장' 모드가 동작한다.
 const ABBR = new Set([
   "e.g", "i.e", "cf", "vs", "fig", "figs", "eq", "eqs", "tab", "sec", "secs", "no", "nos", "al",
   "dr", "mr", "mrs", "ms", "prof", "vol", "pp", "ch", "approx", "resp", "ca", "viz", "etc",
@@ -55,7 +57,7 @@ export function splitSentences(text: string): string[] {
     let j = i + 1;
     while (j < text.length && /[)\]"'’”]/.test(text[j])) j++;
     const rest = text.slice(j);
-    const ends = j >= text.length || /^\s+[A-Z([“"'\d]/.test(rest);
+    const ends = j >= text.length || /^\s*[A-Z([“"'\d]/.test(rest);
     if (!ends) continue;
     if (c === ".") {
       // 소수점 (숫자.숫자) / 약어 / 단일 이니셜은 제외
