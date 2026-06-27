@@ -1,6 +1,6 @@
 // Electron main process — 파일 IO, 메뉴, 문서 데이터 접근 (명세 §12, §10).
 // 경로는 app.getPath('userData') 로 OS-중립 (macOS/Windows 양쪽 동작).
-import { app, BrowserWindow, ipcMain, protocol, dialog, net, shell } from "electron";
+import { app, BrowserWindow, ipcMain, protocol, dialog, net, shell, nativeImage } from "electron";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { pathToFileURL } from "node:url";
@@ -8,6 +8,14 @@ import { watch, existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 
 const isDev = !app.isPackaged;
+
+// 앱 이름 — dev 에서 메뉴/독이 "Electron" 으로 뜨지 않게(패키징은 productName 적용).
+app.setName("갈피");
+
+// dev 용 아이콘 PNG 경로(빌드 리소스). 패키징 앱은 번들 아이콘(.icns)을 씀.
+function devIconPath(): string {
+  return path.join(__dirname, "../build/icon.png");
+}
 
 // 배포용: 친구가 공개 릴리스에서 업데이트를 받아볼 GitHub 저장소.
 const RELEASES_REPO = "ChanchanCode/galpi";
@@ -58,6 +66,8 @@ function createWindow() {
   const win = new BrowserWindow({
     width: 1200,
     height: 900,
+    title: "갈피",
+    icon: isDev ? devIconPath() : undefined, // mac 패키징은 번들 아이콘 사용
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -355,6 +365,11 @@ function cmpVersion(a: string, b: string): number {
 }
 
 app.whenReady().then(() => {
+  // dev 에서 독 아이콘도 갈피로(패키징 앱은 번들 .icns 사용)
+  if (isDev && process.platform === "darwin" && app.dock) {
+    const img = nativeImage.createFromPath(devIconPath());
+    if (!img.isEmpty()) app.dock.setIcon(img);
+  }
   registerDocProtocol();
   createWindow();
   startDocsWatcher();
