@@ -24,7 +24,7 @@ interface GlobalSettings {
   reading?: Partial<ReadingOpts>;
 }
 
-const DEFAULT_TRANSLATION: TranslationConfig = { apiKey: "", model: "gemini-2.0-flash" };
+const DEFAULT_TRANSLATION: TranslationConfig = { apiKey: "", model: "gemini-2.5-flash-lite" };
 
 let presetSeq = 0;
 function newPresetId(): string {
@@ -71,10 +71,14 @@ export const useStore = create<Store>((set, get) => ({
   // 앱 시작 시 전역 설정 로드 (타이포 + 사용자 폰트 + 번역 + 단축키 + 사용자 프리셋)
   initSession: async () => {
     const g = (await window.paperAPI.loadSettings()) as GlobalSettings | null;
+    // 옛 기본 모델(2.0-flash, 429 잦음)은 새 기본값으로 자동 교체
+    const savedTr: Partial<TranslationConfig> = g?.translation ?? {};
+    const migratedModel =
+      !savedTr.model || savedTr.model === "gemini-2.0-flash" ? DEFAULT_TRANSLATION.model : savedTr.model;
     set({
       typography: { ...DEFAULT_TYPOGRAPHY, ...(g?.typography ?? {}) },
       userFonts: g?.fonts ?? [],
-      translation: { ...DEFAULT_TRANSLATION, ...(g?.translation ?? {}) },
+      translation: { ...DEFAULT_TRANSLATION, ...savedTr, model: migratedModel },
       keymap: { ...DEFAULT_KEYMAP, ...(g?.keymap ?? {}) },
       customPresets: Array.isArray(g?.customPresets)
         ? g!.customPresets!.map((p) => ({ ...p, typography: sanitizeTypography(p.typography) }))

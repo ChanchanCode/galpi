@@ -238,7 +238,9 @@ ipcMain.handle("translate:text", async (_e, text: string) => {
     | { translation?: { apiKey?: string; model?: string } }
     | null;
   const apiKey = settings?.translation?.apiKey?.trim();
-  const model = settings?.translation?.model?.trim() || "gemini-2.0-flash";
+  // 기본 모델: gemini-2.5-flash-lite (무료 할당량 넉넉). 옛 기본값(2.0-flash)은 자동 교체 — 429 회피.
+  const saved = settings?.translation?.model?.trim();
+  const model = !saved || saved === "gemini-2.0-flash" ? "gemini-2.5-flash-lite" : saved;
   if (!apiKey) {
     return { error: "읽기 설정 → 번역에서 Gemini API 키를 입력하세요 (aistudio.google.com 무료 발급)." };
   }

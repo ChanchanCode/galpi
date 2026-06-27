@@ -342,7 +342,15 @@ export function TypographyPanel({
               onChange={(e) => setTranslationConfig({ apiKey: e.target.value })}
             />
           </label>
-          <p className="typo-note">선택한 문장이 Google로 전송됩니다. 미공개 논문은 키를 비워 두세요(번역 비활성).</p>
+          <label className="ctrl">
+            <span className="ctrl-label">모델</span>
+            <select value={translation.model} onChange={(e) => setTranslationConfig({ model: e.target.value })}>
+              <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite (기본 · 빠름)</option>
+              <option value="gemini-2.5-flash">gemini-2.5-flash (정확)</option>
+              <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+            </select>
+          </label>
+          <p className="typo-note">선택한 문장이 Google로 전송됩니다. 429(할당량) 오류가 나면 다른 모델로 바꿔보세요. 미공개 논문은 키를 비워 두세요.</p>
         </div>
 
         {/* 추출 엔진 · 업데이트 (배포) */}
