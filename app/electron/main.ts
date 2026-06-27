@@ -268,6 +268,68 @@ ipcMain.handle("translate:text", async (_e, text: string) => {
   }
 });
 
+// 스트리밍 번역 — SSE(streamGenerateContent)로 조각을 받아 즉시 렌더러로 전송(translate:delta),
+// 완료 시 전체 텍스트 반환. 체감 지연이 크게 줄어든다.
+ipcMain.handle("translate:stream", async (e, text: string, reqId: number) => {
+  const settings = (await readJson(settingsPath())) as
+    | { translation?: { apiKey?: string; model?: string } }
+    | null;
+  const apiKey = settings?.translation?.apiKey?.trim();
+  const saved = settings?.translation?.model?.trim();
+  const model = !saved || saved === "gemini-2.0-flash" ? "gemini-2.5-flash-lite" : saved;
+  if (!apiKey) {
+    return { error: "읽기 설정 → 번역에서 Gemini API 키를 입력하세요 (aistudio.google.com 무료 발급)." };
+  }
+  const send = (delta: string) => {
+    if (!e.sender.isDestroyed()) e.sender.send("translate:delta", { id: reqId, delta });
+  };
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: TRANSLATE_PROMPT + text }] }],
+        generationConfig: { temperature: 0.2 },
+      }),
+    });
+    if (!r.ok || !r.body) {
+      const body = await r.text().catch(() => "");
+      return { error: `Gemini API 오류 ${r.status}: ${body.slice(0, 160)}` };
+    }
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    let full = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl: number;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line.startsWith("data:")) continue;
+        const data = line.slice(5).trim();
+        if (!data || data === "[DONE]") continue;
+        try {
+          const j = JSON.parse(data) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
+          const t = j.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
+          if (t) {
+            full += t;
+            send(t);
+          }
+        } catch {
+          /* keepalive/부분 라인 무시 */
+        }
+      }
+    }
+    return { translation: full.trim() };
+  } catch (err) {
+    return { error: String(err) };
+  }
+});
+
 // ── PDF 드래그-드롭 추출: extract.py 를 자식 프로세스로 실행 ──────────────
 // 추출은 document.json/status.json 을 점진 기록 → 와처가 라이브러리를 자동 갱신.
 ipcMain.handle("pipeline:extract", async (_e, pdfPath: string) => {

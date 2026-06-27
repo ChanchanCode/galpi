@@ -14,6 +14,8 @@ export type DocSummary = {
 };
 export type UserFont = { name: string; dataUrl: string };
 
+let translateReqId = 0;
+
 const api = {
   listDocs: (): Promise<DocSummary[]> => ipcRenderer.invoke("docs:list"),
   loadDoc: (docId: string): Promise<unknown> => ipcRenderer.invoke("docs:load", docId),
@@ -26,9 +28,26 @@ const api = {
   pickFonts: (): Promise<UserFont[]> => ipcRenderer.invoke("fonts:pick"),
   // 문서 자산 URL 빌더: paper://<docId>/<상대경로>
   assetUrl: (docId: string, rel: string) => `paper://${docId}/${rel}`,
-  // 로컬 번역 (NLLB, 오프라인)
+  // 번역 (Gemini 클라우드)
   translate: (text: string, src = "en", tgt = "ko"): Promise<{ translation?: string; error?: string }> =>
     ipcRenderer.invoke("translate:text", text, src, tgt),
+  // 스트리밍 번역 — 생성되는 조각을 onDelta 로 즉시 받고, 완료 시 전체 텍스트 반환.
+  translateStream: (
+    text: string,
+    onDelta: (delta: string) => void,
+  ): Promise<{ translation?: string; error?: string }> => {
+    const id = ++translateReqId;
+    const handler = (_e: unknown, payload: { id: number; delta: string }) => {
+      if (payload?.id === id) onDelta(payload.delta);
+    };
+    ipcRenderer.on("translate:delta", handler);
+    return ipcRenderer
+      .invoke("translate:stream", text, id)
+      .finally(() => ipcRenderer.removeListener("translate:delta", handler)) as Promise<{
+      translation?: string;
+      error?: string;
+    }>;
+  },
   // 추출 진행/완료 라이브 통지 구독. 해제 함수 반환.
   onDocsChanged: (cb: () => void): (() => void) => {
     const handler = () => cb();

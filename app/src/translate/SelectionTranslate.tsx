@@ -17,6 +17,7 @@ export function SelectionTranslate({ containerSel }: { containerSel: string }) {
   const [result, setResult] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
+  const reqRef = useRef(0); // 최신 요청 토큰 — 겹친 스트림의 잔여 델타 무시
 
   // 현재 선택이 본문 컨테이너 안인지 + 위치/텍스트 반환
   const getSelectionInContainer = useCallback((): Anchor | null => {
@@ -32,14 +33,23 @@ export function SelectionTranslate({ containerSel }: { containerSel: string }) {
   }, [containerSel]);
 
   const translate = useCallback(async (a: Anchor) => {
+    const my = ++reqRef.current;
     setAnchor(a);
     setLoading(true);
-    setResult(null);
+    setResult("");
     try {
-      const res = await window.paperAPI.translate(a.text);
-      setResult(res.error ? `⚠️ ${res.error}` : res.translation ?? "");
+      const res = await window.paperAPI.translateStream(a.text, (delta) => {
+        if (my !== reqRef.current) return; // 더 새 요청이 시작됨 → 무시
+        setLoading(false); // 첫 조각 도착 → 스피너 끄고 흘려보냄
+        setResult((prev) => (prev ?? "") + delta);
+      });
+      if (my !== reqRef.current) return;
+      if (res.error) setResult(`⚠️ ${res.error}`);
+      else setResult(res.translation ?? "");
+    } catch (err) {
+      if (my === reqRef.current) setResult(`⚠️ ${String(err)}`);
     } finally {
-      setLoading(false);
+      if (my === reqRef.current) setLoading(false);
     }
   }, []);
 
