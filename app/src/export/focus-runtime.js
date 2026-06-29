@@ -111,10 +111,23 @@
   }
 
   var mode = "off", units = [], idx = -1, prevEl = null, lastMove = 0;
+  // 활성 문장 하이라이트는 객체 하나를 유지하며 범위만 교체한다.
+  // (WebKit/Safari 은 레지스트리 항목을 새 Highlight 로 교체하면 이전 칠한 영역을 다시 안 그리는 버그가 있어,
+  //  같은 객체의 clear()/add() 로 갱신해야 이전 문장이 제대로 흐려진다.)
+  var focusHl = null;
+
+  function setFocusRange(r) {
+    if (!supported()) return;
+    if (!focusHl) { focusHl = new Highlight(); CSS.highlights.set(HL_KEY, focusHl); }
+    focusHl.clear();
+    focusHl.add(r);
+  }
 
   function clearMarks() {
     if (prevEl) { prevEl.classList.remove("is-focus"); prevEl = null; }
+    if (focusHl) focusHl.clear();
     if (supported()) CSS.highlights.delete(HL_KEY);
+    focusHl = null;
   }
 
   function apply(i, scroll) {
@@ -128,7 +141,7 @@
       if (scroll) u.el.scrollIntoView({ block: "center", behavior: "smooth" });
     } else {
       var r = rangeForSpan(u.el, u.start, u.end);
-      if (r && supported()) CSS.highlights.set(HL_KEY, new Highlight(r));
+      if (r) setFocusRange(r);
       if (scroll && r) {
         var sc = scroller();
         if (sc) {
@@ -262,11 +275,9 @@
     if (handleRefClick(t)) { e.preventDefault(); return; }
     // 일반 링크는 그대로
     if (t.closest("a")) return;
-    // 포커스 모드: 좌/우 탭으로 이전/다음 단위
+    // 포커스 모드: 화면 좌/우 어디든(여백 포함) 탭하면 이전/다음 단위로 이동
     if (mode !== "off") {
       if (hasSelection()) return; // 텍스트 선택 중엔 이동 안 함
-      var c = content();
-      if (!c || !c.contains(t)) return;
       step(e.clientX < window.innerWidth / 2 ? -1 : 1, false);
     }
   }
