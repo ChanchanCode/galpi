@@ -2,6 +2,7 @@
 // 경로는 app.getPath('userData') 로 OS-중립 (macOS/Windows 양쪽 동작).
 import { app, BrowserWindow, ipcMain, protocol, dialog, net, shell, nativeImage } from "electron";
 import path from "node:path";
+import os from "node:os";
 import fs from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { watch, existsSync } from "node:fs";
@@ -20,11 +21,30 @@ function devIconPath(): string {
 // 배포용: 친구가 공개 릴리스에서 업데이트를 받아볼 GitHub 저장소.
 const RELEASES_REPO = "ChanchanCode/galpi";
 
+// 데이터 폴더: ~/Library/Application Support/Galpi (구버전은 PaperReader → 최초 실행 시 이전).
+const DATA_DIR_NAME = "Galpi";
+const LEGACY_DATA_DIR_NAME = "PaperReader";
 function appSupportDir(): string {
-  return path.join(app.getPath("appData"), "PaperReader");
+  return path.join(app.getPath("appData"), DATA_DIR_NAME);
+}
+function legacyAppSupportDir(): string {
+  return path.join(app.getPath("appData"), LEGACY_DATA_DIR_NAME);
 }
 function settingsPath(): string {
   return path.join(appSupportDir(), "settings.json");
+}
+
+// 구 데이터 폴더(PaperReader)를 새 폴더(Galpi)로 한 번만 이전(문서·설정·라이브러리·pyenv 통째 이동).
+async function migrateLegacyDataDir(): Promise<void> {
+  const cur = appSupportDir();
+  const legacy = legacyAppSupportDir();
+  if (existsSync(cur) || !existsSync(legacy)) return; // 이미 이전됐거나 구 폴더 없음
+  try {
+    await fs.rename(legacy, cur);
+    console.log(`[migrate] ${legacy} → ${cur}`);
+  } catch (err) {
+    console.warn("[migrate] 데이터 폴더 이전 실패(무시):", err);
+  }
 }
 
 // 추출 파이프라인 스크립트(extract.py 등) 위치.
@@ -42,6 +62,8 @@ async function resolvePython(): Promise<string> {
   if (s?.pythonPath && existsSync(s.pythonPath)) return s.pythonPath;
   const def = path.join(appSupportDir(), "pyenv", "bin", "python");
   if (existsSync(def)) return def;
+  const legacy = path.join(legacyAppSupportDir(), "pyenv", "bin", "python"); // 이전 전 구버전 호환
+  if (existsSync(legacy)) return legacy;
   const dev = path.resolve(__dirname, "../../pipeline/.venv/bin/python");
   if (existsSync(dev)) return dev;
   return def; // 없으면 기본 경로 반환(상태/에러 메시지에 표시)
@@ -53,13 +75,10 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 // 추출 파이프라인과 공유하는 문서 루트.
-// pipeline/extract.py 의 default_output_root() 와 동일 위치를 가리켜야 한다.
-// macOS: ~/Library/Application Support/PaperReader/docs
+// macOS: ~/Library/Application Support/Galpi/docs
 function docsRoot(): string {
-  // app.getPath('userData') = ~/Library/Application Support/<appName>.
-  // productName("갈피")과 무관하게 데이터 폴더는 PaperReader 로 고정(기존 문서/설정 호환).
-  const base = path.join(app.getPath("appData"), "PaperReader");
-  return path.join(base, "docs");
+  // pipeline/extract.py 의 default_output_root() 와 동일 위치(<appData>/Galpi/docs).
+  return path.join(appSupportDir(), "docs");
 }
 
 function createWindow() {
@@ -171,6 +190,22 @@ ipcMain.handle("reading:update", async (_e, docId: string, patch: Record<string,
   return next;
 });
 
+// 자립형 HTML 내보내기 — 렌더러가 완성한 HTML 문자열을 저장 다이얼로그로 파일에 쓴다.
+// (AirDrop 으로 아이패드에 보내 Safari 로 읽기 위함. 포커스 기능 포함.)
+ipcMain.handle("export:saveHtml", async (_e, html: string, filename: string) => {
+  const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  const defaultPath = path.join(app.getPath("downloads"), filename);
+  const res = await dialog.showSaveDialog(win ?? undefined!, {
+    title: "HTML로 내보내기",
+    defaultPath,
+    filters: [{ name: "HTML", extensions: ["html"] }],
+  });
+  if (res.canceled || !res.filePath) return { canceled: true };
+  await fs.writeFile(res.filePath, html, "utf8");
+  void shell.showItemInFolder(res.filePath); // Finder 에 보여줘 AirDrop 하기 쉽게
+  return { path: res.filePath };
+});
+
 // ── 라이브러리 정리 (폴더 트리 + 문서 폴더배정/이름변경) ─────────────────
 // library.json: { folders: [{id,name,parentId}], docs: { [docId]: {folder, title} } }
 function libraryPath(): string {
@@ -202,7 +237,7 @@ ipcMain.handle("docs:delete", async (_e, docId: string) => {
 
 // 전역 설정 (§10) — 기본 타이포·폰트·단축키.
 ipcMain.handle("settings:load", async () => {
-  const file = path.join(app.getPath("appData"), "PaperReader", "settings.json");
+  const file = settingsPath();
   try {
     return JSON.parse(await fs.readFile(file, "utf8"));
   } catch {
@@ -211,7 +246,7 @@ ipcMain.handle("settings:load", async () => {
 });
 
 ipcMain.handle("settings:save", async (_e, settings: unknown) => {
-  const dir = path.join(app.getPath("appData"), "PaperReader");
+  const dir = appSupportDir();
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(path.join(dir, "settings.json"), JSON.stringify(settings, null, 2));
   return true;
@@ -473,8 +508,56 @@ ipcMain.handle("ai:listModels", async (_e, provider: AIProvider, key: string) =>
   }
 });
 
-// ── PDF 드래그-드롭 추출: extract.py 를 자식 프로세스로 실행 ──────────────
+// ── PDF 추출: extract.py 를 자식 프로세스로 실행 — '직렬 큐'(동시 1개) ────────
+// 여러 PDF 를 한꺼번에 끌어다 놔도 한 번에 하나씩만 처리한다(메모리 폭주·먹통 방지).
 // 추출은 document.json/status.json 을 점진 기록 → 와처가 라이브러리를 자동 갱신.
+interface ExtractJob { pdfPath: string; py: string; scriptsDir: string; script: string }
+const extractQueue: ExtractJob[] = [];
+let extractActive = false;
+
+// MinerU 의 BLAS/OMP 스레드를 코어 절반으로 제한 → 추출 중에도 컴퓨터가 멈추지 않게.
+function extractEnv(): NodeJS.ProcessEnv {
+  const n = String(Math.max(1, Math.floor(os.cpus().length / 2)));
+  return {
+    ...process.env,
+    OMP_NUM_THREADS: n,
+    MKL_NUM_THREADS: n,
+    OPENBLAS_NUM_THREADS: n,
+    NUMEXPR_NUM_THREADS: n,
+    VECLIB_MAXIMUM_THREADS: n,
+    TOKENIZERS_PARALLELISM: "false",
+  };
+}
+
+function runNextExtract(): void {
+  if (extractActive) return;
+  const job = extractQueue.shift();
+  if (!job) return;
+  extractActive = true;
+  const env = extractEnv();
+  // 우선순위를 낮춰(nice) 다른 앱이 멈추지 않게. (mac/linux; win 은 그대로)
+  const useNice = process.platform !== "win32";
+  const cmd = useNice ? "nice" : job.py;
+  const args = useNice ? ["-n", "15", job.py, job.script, job.pdfPath] : [job.script, job.pdfPath];
+  let child;
+  try {
+    child = spawn(cmd, args, { cwd: job.scriptsDir, stdio: "ignore", env });
+  } catch {
+    extractActive = false;
+    setTimeout(runNextExtract, 200);
+    return;
+  }
+  let settled = false;
+  const done = () => {
+    if (settled) return;
+    settled = true;
+    extractActive = false;
+    setTimeout(runNextExtract, 500); // 다음 작업 전 잠깐 — 메모리 회수 여유
+  };
+  child.on("error", done);
+  child.on("close", done);
+}
+
 ipcMain.handle("pipeline:extract", async (_e, pdfPath: string) => {
   const py = await resolvePython();
   const scriptsDir = pipelineScriptsDir();
@@ -491,16 +574,13 @@ ipcMain.handle("pipeline:extract", async (_e, pdfPath: string) => {
   if (!/\.pdf$/i.test(pdfPath)) {
     return { error: "PDF 파일만 추출할 수 있습니다." };
   }
-  try {
-    const child = spawn(py, [script, pdfPath], { cwd: scriptsDir, stdio: "ignore" });
-    let spawnErr: string | null = null;
-    child.on("error", (e) => (spawnErr = String(e)));
-    // 비동기 시작 — 진행/완료는 status.json 와처가 라이브러리에 반영.
-    await new Promise((r) => setTimeout(r, 150));
-    return spawnErr ? { error: spawnErr } : { started: true };
-  } catch (err) {
-    return { error: String(err) };
+  if (extractQueue.some((j) => j.pdfPath === pdfPath)) {
+    return { started: true, queued: true }; // 이미 대기 중인 같은 파일
   }
+  const position = extractActive || extractQueue.length > 0 ? extractQueue.length + 1 : 0;
+  extractQueue.push({ pdfPath, py, scriptsDir, script });
+  runNextExtract();
+  return { started: true, queued: position > 0, position };
 });
 
 // ── 추출 엔진 상태 / 설정 (배포: 친구가 셋업 후 경로 확인·지정) ──────────
@@ -578,7 +658,7 @@ async function fetchLatestRelease(): Promise<ReleaseInfo> {
   const current = app.getVersion();
   try {
     const r = await fetch(`https://api.github.com/repos/${RELEASES_REPO}/releases/latest`, {
-      headers: { Accept: "application/vnd.github+json", "User-Agent": "PaperReader" },
+      headers: { Accept: "application/vnd.github+json", "User-Agent": "Galpi" },
     });
     if (!r.ok) {
       return { current, error: `릴리스를 찾을 수 없습니다 (${r.status}). 저장소/릴리스가 공개인지 확인하세요.` };
@@ -659,12 +739,13 @@ function cmpVersion(a: string, b: string): number {
   return 0;
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // dev 에서 독 아이콘도 갈피로(패키징 앱은 번들 .icns 사용)
   if (isDev && process.platform === "darwin" && app.dock) {
     const img = nativeImage.createFromPath(devIconPath());
     if (!img.isEmpty()) app.dock.setIcon(img);
   }
+  await migrateLegacyDataDir(); // 구 PaperReader 폴더 → Galpi (최초 1회)
   registerDocProtocol();
   const win = createWindow();
   startDocsWatcher();

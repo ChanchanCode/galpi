@@ -109,6 +109,7 @@ export function FocusMode({ mode, docId, blockCount }: Props) {
   const unitsRef = useRef<Unit[]>([]);
   const idxRef = useRef<number>(-1);
   const prevElRef = useRef<HTMLElement | null>(null);
+  const lastMoveRef = useRef(0); // 꾹 누름(자동반복) 속도 제한용 타임스탬프
 
   // 활성 단위 표시(문단=is-focus, 문장=highlight) + 선택적 스크롤
   const apply = (idx: number, scroll: boolean) => {
@@ -212,10 +213,20 @@ export function FocusMode({ mode, docId, blockCount }: Props) {
       const units = unitsRef.current;
       if (!units.length) return;
       e.preventDefault();
+      // 꾹 누름(자동반복)은 일정 간격으로만 진행 — 인덱스가 스크롤보다 너무 앞서가지 않게.
+      if (e.repeat) {
+        const now = performance.now();
+        if (now - lastMoveRef.current < 80) return;
+        lastMoveRef.current = now;
+      } else {
+        lastMoveRef.current = performance.now();
+      }
       const scroller = document.querySelector(SCROLL_SEL) as HTMLElement | null;
       let cur = idxRef.current;
-      // 현재 활성 단위가 화면 밖이면 가운데 기준으로 재설정
-      if (cur < 0 || (scroller && !inView(rectOf(units[cur]), scroller))) cur = nearestIdx();
+      // 새 키 입력(비반복)일 때만: 활성 단위가 화면 밖이면 가운데 기준으로 재설정(수동 스크롤 후 자동 재포착).
+      // 꾹 누르는 중(반복)엔 재설정하지 않고 직전 인덱스에서 계속 진행 → 스크롤이 좀 늦어도 한 구간에 갇히지 않음.
+      if (!e.repeat && (cur < 0 || (scroller && !inView(rectOf(units[cur]), scroller)))) cur = nearestIdx();
+      else if (cur < 0) cur = nearestIdx();
       const next = Math.max(0, Math.min(units.length - 1, cur + (fwd ? 1 : -1)));
       apply(next, true);
     };

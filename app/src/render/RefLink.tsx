@@ -96,6 +96,7 @@ export function RefLink({ targetKey, label }: { targetKey: string; label: string
       <span
         ref={ref}
         className={`refl refl-${kind} ${open ? "on" : ""}`}
+        data-ref-target={block.id}
         onMouseEnter={scheduleOpen}
         onMouseLeave={scheduleClose}
         onClick={jump}

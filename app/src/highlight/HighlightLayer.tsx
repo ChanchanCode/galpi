@@ -2,22 +2,22 @@
 // text 위 hover UI 금지.) 본문에서 텍스트 선택 후:
 //   · 단축키 탭 → 색 순환(노랑→초록→파랑→분홍→보라→해제)
 //   · 단축키 꾹 누름 → 즉시 제거
-// 같은 텍스트가 문서 전체에서 함께 칠해진다. 규칙은 문서별 state.json 에 영속(§10).
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+// 같은 텍스트가 문서 전체에서 함께 칠해진다.
+// 상태(규칙)는 useAnnotations 훅이 소유하고 props 로 내려준다(제어형). 본 레이어는
+// "본문 적용 + 키보드 생성/순환/제거 + 출현 수 집계"만 담당하고, 목록 UI 는 AnnotationsPanel 이 그린다.
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { PaperDocument } from "../types";
 import { useStore } from "../store/useStore";
 import { baseKey, isEditableTarget, matchCombo } from "../keys/keymap";
-import { jumpWith } from "../nav/jump";
 import {
   applyHighlights,
   clearHighlights,
-  firstMatchRange,
-  isHighlightSupported,
   normalizeText,
-  PALETTE,
+  occurrenceOf,
+  ruleScope,
   type HighlightRule,
   type HlColor,
-  type HlStyle,
+  type HlScope,
 } from "./highlights";
 
 const CONTAINER_SEL = ".reader-content";
@@ -33,76 +33,40 @@ const COLOR_LABEL: Record<HlColor, string> = {
 
 interface Props {
   doc: PaperDocument;
-  panelOpen: boolean;
-  onClosePanel: () => void;
+  rules: HighlightRule[];
+  updateRules: (updater: (prev: HighlightRule[]) => HighlightRule[]) => void;
+  onCounts: (counts: Record<string, number>) => void;
 }
 
 function newId(): string {
   return "h_" + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
 }
 
-export function HighlightLayer({ doc, panelOpen, onClosePanel }: Props) {
+export function HighlightLayer({ doc, rules, updateRules, onCounts }: Props) {
   const keymap = useStore((s) => s.keymap);
-  const [rules, setRules] = useState<HighlightRule[]>([]);
-  const [counts, setCounts] = useState<Record<string, number>>({});
   const [status, setStatus] = useState<string | null>(null);
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const statusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const loadedFor = useRef<string | null>(null);
   // 누름 추적: 같은 키 keydown→keyup 구간으로 탭/홀드 판별
-  const press = useRef<{ key: string; text: string; held: boolean; timer: ReturnType<typeof setTimeout> } | null>(null);
+  const press = useRef<{
+    key: string;
+    scope: HlScope;
+    text: string;
+    occurrence: number;
+    held: boolean;
+    timer: ReturnType<typeof setTimeout>;
+  } | null>(null);
 
-  // 문서 열릴 때 규칙 로드 (state.json 사이드카)
-  useEffect(() => {
-    let alive = true;
-    loadedFor.current = null;
-    (async () => {
-      const st = (await window.paperAPI.loadState(doc.doc_id)) as
-        | { highlights?: HighlightRule[] }
-        | null;
-      if (!alive) return;
-      setRules(Array.isArray(st?.highlights) ? st!.highlights! : []);
-      loadedFor.current = doc.doc_id;
-    })();
-    return () => {
-      alive = false;
-      clearHighlights();
-    };
-  }, [doc.doc_id]);
+  // 문서 닫힐 때 우리 하이라이트 정리
+  useEffect(() => () => clearHighlights(), [doc.doc_id]);
 
-  // 규칙 변경 → 디바운스 영속(병합 저장, 다른 state 키 보존)
-  const persist = useCallback(
-    (next: HighlightRule[]) => {
-      if (saveTimer.current) clearTimeout(saveTimer.current);
-      const docId = doc.doc_id;
-      saveTimer.current = setTimeout(() => {
-        if (loadedFor.current === docId) {
-          void window.paperAPI.updateReading(docId, { highlights: next });
-        }
-      }, 300);
-    },
-    [doc.doc_id],
-  );
-
-  const updateRules = useCallback(
-    (updater: (prev: HighlightRule[]) => HighlightRule[]) => {
-      setRules((prev) => {
-        const next = updater(prev);
-        persist(next);
-        return next;
-      });
-    },
-    [persist],
-  );
-
-  // 규칙/문서 변경 → 하이라이트 재계산 (DOM 렌더 후 rAF).
+  // 규칙/문서 변경 → 하이라이트 재계산 (DOM 렌더 후 rAF). 출현 수는 위로 보고.
   useEffect(() => {
     const raf = requestAnimationFrame(() => {
       const container = document.querySelector(CONTAINER_SEL) as HTMLElement | null;
-      if (container) setCounts(applyHighlights(container, rules));
+      if (container) onCounts(applyHighlights(container, rules));
     });
     return () => cancelAnimationFrame(raf);
-  }, [rules, doc]);
+  }, [rules, doc, onCounts]);
 
   const flashStatus = useCallback((msg: string) => {
     setStatus(msg);
@@ -142,8 +106,8 @@ export function HighlightLayer({ doc, panelOpen, onClosePanel }: Props) {
     };
   }, [setDim]);
 
-  // 현재 선택의 정규화 텍스트(본문 컨테이너 안이어야 함)
-  const readSelectionText = useCallback((): string | null => {
+  // 현재 선택(본문 컨테이너 안) → 정규화 텍스트 + Range. passage 는 Range 로 출현 위치를 잡는다.
+  const readSelection = useCallback((): { text: string; range: Range } | null => {
     const s = window.getSelection();
     if (!s || s.isCollapsed || !s.rangeCount) return null;
     const text = normalizeText(s.toString());
@@ -151,20 +115,28 @@ export function HighlightLayer({ doc, panelOpen, onClosePanel }: Props) {
     const range = s.getRangeAt(0);
     const container = document.querySelector(CONTAINER_SEL);
     if (!container || !container.contains(range.commonAncestorContainer)) return null;
-    return text;
+    return { text, range };
   }, []);
 
-  // 같은 텍스트(대소문자 무시) 규칙 — 중복 생성 방지(§8.4)
-  const findRuleByText = useCallback(
-    (prev: HighlightRule[], text: string) => prev.find((r) => r.text === text && !r.case_sensitive),
+  // 같은 대상 규칙 찾기 — 중복 생성 방지. keyword: 같은 텍스트. passage: 같은 텍스트+같은 출현.
+  const findRule = useCallback(
+    (prev: HighlightRule[], scope: HlScope, text: string, occurrence: number) =>
+      prev.find(
+        (r) =>
+          ruleScope(r) === scope &&
+          r.text === text &&
+          !r.case_sensitive &&
+          (scope === "keyword" || (r.occurrence ?? 0) === occurrence),
+      ),
     [],
   );
 
-  // 탭: 색 순환(없으면 노랑 → … → 보라 → 해제)
+  // 탭: 색 순환(없으면 노랑 → … → 보라 → 해제). scope 에 따라 키워드/선택-부분 규칙을 만든다.
   const cycle = useCallback(
-    (text: string) => {
+    (scope: HlScope, text: string, occurrence: number) => {
+      const kindLabel = scope === "keyword" ? "키워드 형광펜" : "형광펜";
       updateRules((prev) => {
-        const existing = findRuleByText(prev, text);
+        const existing = findRule(prev, scope, text, occurrence);
         if (!existing) {
           const rule: HighlightRule = {
             id: newId(),
@@ -172,42 +144,44 @@ export function HighlightLayer({ doc, panelOpen, onClosePanel }: Props) {
             color: "yellow",
             style: "fill",
             case_sensitive: false,
-            whole_word: true,
+            whole_word: scope === "keyword", // 키워드만 단어 경계, passage 는 선택 구절 그대로
             label: null,
             note: null,
             created_at: new Date().toISOString(),
+            scope,
+            ...(scope === "passage" ? { occurrence } : {}),
           };
-          flashStatus(`${COLOR_LABEL.yellow} 형광펜`);
+          flashStatus(`${COLOR_LABEL.yellow} ${kindLabel}`);
           setDim(text); // 색이 보이도록 선택 배경 숨김
           return [...prev, rule];
         }
         const i = CYCLE.indexOf(existing.color);
         if (i >= CYCLE.length - 1) {
-          flashStatus("형광펜 해제");
+          flashStatus(`${kindLabel} 해제`);
           setDim(null); // 칠한 게 없으니 선택 배경 복원
           return prev.filter((r) => r.id !== existing.id);
         }
         const next = CYCLE[i + 1];
-        flashStatus(`${COLOR_LABEL[next]} 형광펜`);
+        flashStatus(`${COLOR_LABEL[next]} ${kindLabel}`);
         setDim(text);
         return prev.map((r) => (r.id === existing.id ? { ...r, color: next } : r));
       });
     },
-    [updateRules, findRuleByText, flashStatus, setDim],
+    [updateRules, findRule, flashStatus, setDim],
   );
 
   // 홀드: 즉시 제거
-  const removeByText = useCallback(
-    (text: string) => {
+  const removeMatch = useCallback(
+    (scope: HlScope, text: string, occurrence: number) => {
       updateRules((prev) => {
-        const existing = findRuleByText(prev, text);
+        const existing = findRule(prev, scope, text, occurrence);
         if (!existing) return prev;
-        flashStatus("형광펜 제거");
+        flashStatus(scope === "keyword" ? "키워드 형광펜 제거" : "형광펜 제거");
         setDim(null);
         return prev.filter((r) => r.id !== existing.id);
       });
     },
-    [updateRules, findRuleByText, flashStatus, setDim],
+    [updateRules, findRule, flashStatus, setDim],
   );
 
   // ── 키보드: 탭/홀드 판별 ─────────────────────────────────────────
@@ -217,24 +191,36 @@ export function HighlightLayer({ doc, panelOpen, onClosePanel }: Props) {
     const onDown = (e: KeyboardEvent) => {
       if (isEditableTarget(e.target)) return;
       if (e.repeat) return;
-      if (!matchCombo(e, keymap.highlight)) return;
-      const text = readSelectionText();
-      if (!text) return; // 선택 없으면 통과(다른 입력 방해 안 함)
+      // 어떤 형광펜인지 — 키워드(전부) vs 선택-부분(이 부분만). 수식 키가 달라 충돌 없음.
+      const scope: HlScope | null = matchCombo(e, keymap.highlight)
+        ? "keyword"
+        : matchCombo(e, keymap.highlightPassage)
+          ? "passage"
+          : null;
+      if (!scope) return;
+      const sel = readSelection();
+      if (!sel) return; // 선택 없으면 통과(다른 입력 방해 안 함)
       e.preventDefault();
+      // passage 는 선택이 같은 텍스트의 몇 번째 출현인지 고정.
+      let occurrence = 0;
+      if (scope === "passage") {
+        const container = document.querySelector(CONTAINER_SEL) as HTMLElement | null;
+        if (container) occurrence = occurrenceOf(container, sel.text, sel.range);
+      }
       if (press.current) clearTimeout(press.current.timer);
       const timer = setTimeout(() => {
         if (press.current) {
           press.current.held = true;
-          removeByText(press.current.text);
+          removeMatch(press.current.scope, press.current.text, press.current.occurrence);
         }
       }, HOLD_MS);
-      press.current = { key: baseKey(e) ?? "", text, held: false, timer };
+      press.current = { key: baseKey(e) ?? "", scope, text: sel.text, occurrence, held: false, timer };
     };
     const onUp = (e: KeyboardEvent) => {
       const p = press.current;
       if (!p || baseKey(e) !== p.key) return;
       clearTimeout(p.timer);
-      if (!p.held) cycle(p.text); // 탭
+      if (!p.held) cycle(p.scope, p.text, p.occurrence); // 탭
       press.current = null;
       // 선택은 유지 → 연속 탭으로 색 순환 가능
     };
@@ -246,100 +232,7 @@ export function HighlightLayer({ doc, panelOpen, onClosePanel }: Props) {
       if (press.current) clearTimeout(press.current.timer);
       press.current = null;
     };
-  }, [keymap.highlight, readSelectionText, cycle, removeByText]);
+  }, [keymap.highlight, keymap.highlightPassage, readSelection, cycle, removeMatch]);
 
-  // ── 패널 동작 ────────────────────────────────────────────────────
-  const setColor = (id: string, color: HlColor) =>
-    updateRules((prev) => prev.map((r) => (r.id === id ? { ...r, color } : r)));
-  const setStyle = (id: string, style: HlStyle) =>
-    updateRules((prev) => prev.map((r) => (r.id === id ? { ...r, style } : r)));
-  const setLabel = (id: string, label: string) =>
-    updateRules((prev) => prev.map((r) => (r.id === id ? { ...r, label: label || null } : r)));
-  const remove = (id: string) => updateRules((prev) => prev.filter((r) => r.id !== id));
-
-  const jumpTo = (rule: HighlightRule) => {
-    const container = document.querySelector(CONTAINER_SEL) as HTMLElement | null;
-    if (!container) return;
-    const range = firstMatchRange(container, rule);
-    if (!range) return;
-    const parentEl = range.startContainer.parentElement as HTMLElement | null;
-    jumpWith(parentEl, () => {
-      const rect = range.getBoundingClientRect();
-      const scroller = document.querySelector(".reader-scroll") as HTMLElement | null;
-      if (scroller) {
-        scroller.scrollBy({ top: rect.top - scroller.clientHeight / 2, behavior: "smooth" });
-      } else {
-        parentEl?.scrollIntoView({ block: "center", behavior: "smooth" });
-      }
-    });
-  };
-
-  const sortedRules = useMemo(
-    () => [...rules].sort((a, b) => a.created_at.localeCompare(b.created_at)),
-    [rules],
-  );
-
-  const unsupported = !isHighlightSupported();
-
-  return (
-    <>
-      {status && <div className="hl-status">{status}</div>}
-
-      {panelOpen && (
-        <aside className="hl-panel" onMouseDown={(e) => e.stopPropagation()}>
-          <div className="hl-panel-head">
-            <span>형광펜 {rules.length > 0 && `(${rules.length})`}</span>
-            <button className="icon-btn" onClick={onClosePanel} aria-label="닫기">✕</button>
-          </div>
-          {unsupported ? (
-            <p className="hl-empty">이 환경은 하이라이트를 지원하지 않습니다.</p>
-          ) : rules.length === 0 ? (
-            <p className="hl-empty">
-              본문에서 텍스트를 선택하고 형광펜 단축키를 탭하면 같은 단어가 전부 칠해집니다. 다시
-              탭해 색을 바꾸고, 꾹 누르면 제거됩니다.
-            </p>
-          ) : (
-            <ul className="hl-list">
-              {sortedRules.map((r) => (
-                <li key={r.id} className="hl-row">
-                  <div className="hl-row-top">
-                    <button className="hl-jump" onClick={() => jumpTo(r)} title="첫 출현으로 이동">
-                      <span className="hl-text">{r.text}</span>
-                      <span className="hl-count">{counts[r.id] ?? 0}</span>
-                    </button>
-                    <button className="hl-del" onClick={() => remove(r.id)} title="삭제">🗑</button>
-                  </div>
-                  <div className="hl-row-ctrls">
-                    <div className="hl-colors">
-                      {PALETTE.map((p) => (
-                        <button
-                          key={p.key}
-                          className={`hl-swatch sm hl-${p.key} ${r.color === p.key ? "active" : ""}`}
-                          title={p.label}
-                          onClick={() => setColor(r.id, p.key)}
-                        />
-                      ))}
-                    </div>
-                    <button
-                      className={`hl-style-btn ${r.style === "underline" ? "on" : ""}`}
-                      onClick={() => setStyle(r.id, r.style === "fill" ? "underline" : "fill")}
-                      title="채움 ↔ 밑줄"
-                    >
-                      {r.style === "fill" ? "채움" : "밑줄"}
-                    </button>
-                  </div>
-                  <input
-                    className="hl-label"
-                    placeholder="라벨/메모(선택)"
-                    defaultValue={r.label ?? ""}
-                    onBlur={(e) => setLabel(r.id, e.target.value.trim())}
-                  />
-                </li>
-              ))}
-            </ul>
-          )}
-        </aside>
-      )}
-    </>
-  );
+  return status ? <div className="hl-status">{status}</div> : null;
 }

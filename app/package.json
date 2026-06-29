@@ -1,6 +1,6 @@
 {
   "name": "paper-reflow-reader",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "논문 가독성 리플로우 뷰어 (Electron + React)",
   "main": "dist-electron/main.cjs",
   "type": "module",
@@ -34,7 +34,7 @@
     "vite": "^6.0.3"
   },
   "build": {
-    "appId": "com.paperreader.app",
+    "appId": "com.galpi.app",
     "productName": "갈피",
     "directories": {
       "output": "release"

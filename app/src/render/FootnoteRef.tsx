@@ -46,6 +46,7 @@ export function FootnoteRef({ note }: { note: Footnote }) {
       <sup
         ref={ref as React.RefObject<HTMLElement>}
         className={`fn-ref ${open ? "on" : ""}`}
+        data-fn-ref={note.label}
         onClick={toggle}
         role="button"
         title="각주 보기"

@@ -244,8 +244,8 @@ export function Library({ docs, onOpen, onToggleFinished, onRefresh, onOpenSetti
           <h1>갈피</h1>
         </div>
         <div className="bar-actions">
-          <button className="icon-action" onClick={onRefresh} title="새로고침" aria-label="새로고침">↻</button>
-          <button className="icon-action" onClick={onOpenSettings} title="설정" aria-label="설정">{GEAR}</button>
+          <button className="icon-action" onClick={onRefresh} data-tip="새로고침" aria-label="새로고침">↻</button>
+          <button className="icon-action" onClick={onOpenSettings} data-tip="설정" aria-label="설정">{GEAR}</button>
         </div>
       </header>
 

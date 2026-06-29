@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Paper Reader 추출 엔진 설치 (macOS · Apple Silicon)
 # 이 스크립트는 PDF를 논문 뷰어용 데이터로 변환하는 MinerU 엔진을 설치합니다.
-# 앱이 기본으로 찾는 위치(~/Library/Application Support/PaperReader/pyenv)에 venv를 만듭니다.
+# 앱이 기본으로 찾는 위치(~/Library/Application Support/Galpi/pyenv)에 venv를 만듭니다.
 set -euo pipefail
 
-APPSUP="$HOME/Library/Application Support/PaperReader"
+APPSUP="$HOME/Library/Application Support/Galpi"
 VENV="$APPSUP/pyenv"
 DIR="$(cd "$(dirname "$0")" && pwd)"
 

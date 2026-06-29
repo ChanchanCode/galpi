@@ -90,6 +90,9 @@ const api = {
     ipcRenderer.on("pipeline:install-log", h);
     return () => ipcRenderer.removeListener("pipeline:install-log", h);
   },
+  // 자립형 HTML 내보내기 — 완성 HTML 문자열을 저장 다이얼로그로 파일에 쓰기
+  exportHtml: (html: string, filename: string): Promise<{ path?: string; canceled?: boolean }> =>
+    ipcRenderer.invoke("export:saveHtml", html, filename),
   appVersion: (): Promise<string> => ipcRenderer.invoke("app:version"),
   checkUpdate: (): Promise<{
     current: string;

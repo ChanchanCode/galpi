@@ -128,6 +128,24 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-family);
 }
 .icon-action:hover { border-color: var(--accent); color: var(--accent); }
 .icon-action:active { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+/* 상단바 아이콘 버튼 커스텀 툴팁 — 네이티브 title 보다 즉시·확실하게 표시(기능+단축키). */
+.icon-action[data-tip] { position: relative; }
+.icon-action[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 60;
+  width: max-content; max-width: 240px; white-space: normal; text-align: left;
+  padding: 7px 10px; border-radius: 8px;
+  background: var(--fg); color: var(--bg);
+  font-size: 0.76rem; line-height: 1.4; font-weight: 500;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.28);
+  pointer-events: none; opacity: 0; transform: translateY(-3px);
+  transition: opacity 0.12s ease, transform 0.12s ease; transition-delay: 0s;
+}
+.icon-action[data-tip]:hover::after,
+.icon-action[data-tip]:focus-visible::after {
+  opacity: 1; transform: translateY(0); transition-delay: 0.3s; /* 살짝 머문 뒤 표시 */
+}
 .reader-sections { margin-left: auto; } /* 우측 클러스터 시작: [목차][설정] */
 .doc-list { list-style: none; padding: 0; margin: 16px 0 0; }
 .doc-list li { margin: 10px 0; }
@@ -351,6 +369,12 @@ body.peek-dragging, body.peek-dragging * { cursor: grabbing !important; user-sel
 ::highlight(hl-pink-underline)   { text-decoration: underline; text-decoration-color: var(--hl-pink); text-decoration-thickness: 3px; }
 ::highlight(hl-purple-underline) { text-decoration: underline; text-decoration-color: var(--hl-purple); text-decoration-thickness: 3px; }
 
+/* 메모가 달린 구절 — 점선 밑줄로 표시(형광펜 채움/밑줄과 구분). 내용은 인덱스 패널에서. */
+::highlight(note-mark) {
+  text-decoration: underline dashed; text-decoration-color: var(--accent);
+  text-decoration-thickness: 2px; text-underline-offset: 3px;
+}
+
 /* 형광펜 적용 직후: 선택 파란 배경을 투명하게 → 형광펜 색이 가려지지 않음(선택 자체는 유지).
    ::selection 은 커스텀 하이라이트 '위'에 그려지므로 이렇게 해야 색이 보인다. 다음 드래그/클릭에 복원. */
 body[data-hl-dim="on"] .reader-content ::selection { background: transparent; }
@@ -410,6 +434,67 @@ body[data-hl-dim="on"] .reader-content ::selection { background: transparent; }
 .hl-style-btn { font-size: 0.74rem; border: 1px solid var(--rule); border-radius: 6px; background: transparent; color: var(--muted); padding: 2px 8px; cursor: pointer; }
 .hl-style-btn.on { border-color: var(--accent); color: var(--accent); }
 .hl-label { font-size: 0.78rem; padding: 4px 7px; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); color: var(--fg); }
+
+/* ── 주석 인덱스 패널(형광펜 + 메모 모아보기) ── */
+.reader-ann.on { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.ann-tabs { display: flex; gap: 4px; padding: 8px 10px; border-bottom: 1px solid var(--rule); }
+.ann-tabs button {
+  flex: 1; font-size: 0.76rem; padding: 5px 6px; border: 1px solid var(--rule);
+  border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; white-space: nowrap;
+}
+.ann-tabs button.on { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.ann-badge {
+  flex-shrink: 0; font-size: 0.64rem; font-weight: 600; padding: 1px 6px; border-radius: 999px;
+  color: var(--fg); align-self: center;
+}
+.ann-badge.note { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent); }
+.ann-badge.hl.hl-yellow { background: var(--hl-yellow); }
+.ann-badge.hl.hl-green  { background: var(--hl-green); }
+.ann-badge.hl.hl-blue   { background: var(--hl-blue); }
+.ann-badge.hl.hl-pink   { background: var(--hl-pink); }
+.ann-badge.hl.hl-purple { background: var(--hl-purple); }
+.note-row .hl-text { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.note-body-edit {
+  font-size: 0.82rem; line-height: 1.5; padding: 6px 8px; border: 1px solid var(--rule);
+  border-radius: 7px; background: var(--bg); color: var(--fg); resize: vertical; width: 100%; box-sizing: border-box;
+}
+
+/* 메모 호버 툴팁 — 점선 밑줄 구절에 마우스를 올리면 메모 텍스트 위/아래에 내용을 보여줌 */
+.note-tip {
+  position: fixed; z-index: 54; pointer-events: none;
+  max-width: 320px; white-space: pre-wrap; line-height: 1.45;
+  background: var(--fg); color: var(--bg);
+  font-size: 0.82rem; padding: 7px 11px; border-radius: 9px;
+  box-shadow: 0 6px 22px rgba(0,0,0,0.32);
+  animation: note-tip-in 0.1s ease-out;
+}
+.note-tip.above { transform: translate(-50%, -100%); } /* 텍스트 윗변 기준 위로 */
+.note-tip.below { transform: translate(-50%, 0); }      /* 텍스트 아랫변 기준 아래로 */
+@keyframes note-tip-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* ── 메모 작성 팝오버(선택 위에 뜸) ── */
+.note-pop-wrap { position: fixed; z-index: 55; transform: translateX(-50%); }
+.note-pop {
+  width: 320px; background: var(--bg); color: var(--fg);
+  border: 1px solid var(--rule); border-radius: 12px; padding: 12px 13px;
+  box-shadow: 0 10px 34px rgba(0,0,0,0.3);
+}
+.note-quote {
+  font-size: 0.8rem; color: var(--muted); line-height: 1.45; margin-bottom: 8px;
+  max-height: 60px; overflow-y: auto; padding-left: 8px; border-left: 2px solid var(--accent);
+}
+.note-input {
+  width: 100%; box-sizing: border-box; min-height: 76px; resize: vertical;
+  font: inherit; font-size: 0.9rem; line-height: 1.5; padding: 8px 9px;
+  border: 1px solid var(--rule); border-radius: 8px; background: var(--bg); color: var(--fg);
+}
+.note-pop-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; }
+.note-pop-actions { display: flex; gap: 7px; }
+.note-pop button { font-size: 0.8rem; border-radius: 7px; padding: 5px 12px; cursor: pointer; border: 1px solid var(--rule); }
+.note-cancel, .note-del { background: transparent; color: var(--muted); }
+.note-del:hover { color: #e5484d; border-color: #e5484d; }
+.note-save { background: var(--accent); color: #fff; border-color: var(--accent); }
+.note-save:hover { opacity: 0.92; }
 
 /* ── 텍스트 검색 (Cmd+F) ── */
 /* 검색 매칭 하이라이트 — 형광펜(hl-*)과 다른 키라 서로 간섭 없음. 현재 매칭은 강조색. */
@@ -654,13 +739,20 @@ body[data-focus="sentence"] .reader-content ::highlight(focus-line) {
 /* 색 상속만으론 안 흐려지는 요소 보강(문장 모드):
    · 수식/그림/표 블록은 통째로 opacity 다운 → 가로 슬라이더까지 함께 흐려짐.
    · 인라인 수식·상호참조(수식/그림 바로가기) 링크는 흐린 본문색을 따르게(활성 문장은 하이라이트로 또렷). */
+/* 그림·표·디스플레이 수식 블록: 색 상속만으론 안 흐려지니(이미지/슬라이더 포함) 통째로 opacity 다운. */
 body[data-focus="sentence"] .reader-content .blk-formula,
 body[data-focus="sentence"] .reader-content .blk-figure,
 body[data-focus="sentence"] .reader-content .blk-table {
   opacity: 0.3; transition: opacity 0.22s ease;
 }
+/* 본문 속 인라인 수식(.katex)·각주(.fn-ref)·상호참조(.refl) 링크는 자기 색을 갖고 있어 안 흐려진다
+   → 흐린 본문색을 상속하게. 활성 문장 안에 있으면 하이라이트로 다시 또렷해진다. */
+body[data-focus="sentence"] .reader-content .katex,
+body[data-focus="sentence"] .reader-content .fn-ref,
 body[data-focus="sentence"] .reader-content .refl { color: inherit; border-bottom-color: transparent; }
-body[data-focus="sentence"] .reader-content .formula-inline .katex { color: inherit; }
+/* 디스플레이 수식(.katex-display)은 위 블록 opacity 로만 흐리게(이중 흐림 방지). */
+body[data-focus="sentence"] .reader-content .katex-display,
+body[data-focus="sentence"] .reader-content .katex-display .katex { color: var(--fg); }
 
 /* ── 상호참조 (§11-5/§11-7) — 마커 + 호버 프리뷰 + 라이트박스 ── */
 .refl {

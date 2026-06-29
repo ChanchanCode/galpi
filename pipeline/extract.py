@@ -10,7 +10,7 @@
       ├─ assets/              추출된 그림/표/수식 crop (MinerU images 복사)
       └─ source.pdf           원본 사본 (대조용)
 
-output_root 기본값: ~/Library/Application Support/PaperReader/docs (macOS).
+output_root 기본값: ~/Library/Application Support/Galpi/docs (macOS).
 뷰어와 동일 경로 규약 — 뷰어는 Electron app.getPath('userData') 로 같은 곳을 본다.
 """
 
@@ -32,12 +32,12 @@ from rasterize import rasterize_pdf
 def default_output_root() -> Path:
     """OS별 앱 데이터 폴더. macOS 우선, 타 OS 대비 분기 (Windows 이식 여지)."""
     if sys.platform == "darwin":
-        return Path.home() / "Library/Application Support/PaperReader/docs"
+        return Path.home() / "Library/Application Support/Galpi/docs"
     if sys.platform == "win32":  # 미검증 — 코드만 열어둠
         import os
 
-        return Path(os.environ.get("APPDATA", Path.home())) / "PaperReader/docs"
-    return Path.home() / ".local/share/PaperReader/docs"  # Linux 등
+        return Path(os.environ.get("APPDATA", Path.home())) / "Galpi/docs"
+    return Path.home() / ".local/share/Galpi/docs"  # Linux 등
 
 
 def make_doc_id(pdf_path: Path) -> str:

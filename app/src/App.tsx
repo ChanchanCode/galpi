@@ -5,6 +5,7 @@ import type { DocSummary } from "../electron/preload";
 import { BlockRenderer } from "./render/BlockRenderer";
 import { buildFootnotes, FootnoteContext } from "./render/footnotes";
 import { buildCrossRefIndex, CrossRefContext } from "./render/crossrefs";
+import { buildPageMerges, EMPTY_PAGE_MERGE } from "./render/pagemerge";
 import { ReadingContext } from "./render/reading";
 import { FocusMode, type FocusKind } from "./focus/FocusMode";
 import { JumpBackButton } from "./nav/JumpBackButton";
@@ -17,6 +18,10 @@ import { TypographyPanel } from "./typography/TypographyPanel";
 import { SelectionTranslate } from "./translate/SelectionTranslate";
 import { SourcePeek } from "./sourcepeek/SourcePeek";
 import { HighlightLayer } from "./highlight/HighlightLayer";
+import { NotesLayer } from "./notes/NotesLayer";
+import { AnnotationsPanel } from "./annotations/AnnotationsPanel";
+import { useAnnotations } from "./annotations/useAnnotations";
+import { exportDocToHtml } from "./export/exportHtml";
 import { FindBar } from "./search/FindBar";
 import { SectionRail } from "./sections/SectionRail";
 import { ShortcutsPanel } from "./keys/ShortcutsPanel";
@@ -51,7 +56,8 @@ export function App() {
   const [dragging, setDragging] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [inspect, setInspect] = useState(false);
-  const [hlPanel, setHlPanel] = useState(false);
+  const [annPanel, setAnnPanel] = useState(false);
+  const [hlCounts, setHlCounts] = useState<Record<string, number>>({});
   const [sectionPanel, setSectionPanel] = useState(false);
   const [focusMode, setFocusMode] = useState<FocusKind>("off");
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -69,9 +75,13 @@ export function App() {
   const cycleFocus = () => setFocusMode((m) => (m === "off" ? "paragraph" : m === "paragraph" ? "sentence" : "off"));
   const bionicCombo = useStore((s) => s.keymap.bionic);
   const sentenceCombo = useStore((s) => s.keymap.sentenceBreak);
+  const annotationsCombo = useStore((s) => s.keymap.annotations);
   const reading = useStore((s) => s.reading);
   const setReading = useStore((s) => s.setReading);
   const initSession = useStore((s) => s.initSession);
+
+  // 주석(형광펜 + 메모) 단일 소유 — 리더/패널이 공유. 문서 없으면 빈 상태.
+  const ann = useAnnotations(doc?.doc_id ?? null);
 
   useEffect(() => {
     initSession();
@@ -100,6 +110,9 @@ export function App() {
       if (matchCombo(e, sectionsCombo)) {
         e.preventDefault();
         setSectionPanel((v) => !v);
+      } else if (matchCombo(e, annotationsCombo)) {
+        e.preventDefault();
+        setAnnPanel((v) => !v);
       } else if (matchCombo(e, focusCombo)) {
         e.preventDefault();
         cycleFocus();
@@ -113,7 +126,7 @@ export function App() {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [doc, sectionsCombo, focusCombo, bionicCombo, sentenceCombo, reading.bionic, reading.sentenceBreak, setReading]);
+  }, [doc, sectionsCombo, annotationsCombo, focusCombo, bionicCombo, sentenceCombo, reading.bionic, reading.sentenceBreak, setReading]);
 
   // 문서 전환 시 점프 히스토리 초기화 (라이브러리로 나가면 doc=null → 초기화)
   useEffect(() => {
@@ -218,6 +231,17 @@ export function App() {
     setTimeout(() => setToast(null), 4000);
   }
 
+  // 현재 문서를 자립형 HTML 로 내보내기(현재 타이포 프리셋 그대로) → AirDrop 용.
+  async function exportHtml() {
+    if (!doc) return;
+    try {
+      const res = await exportDocToHtml(doc);
+      if (!res.canceled) showToast("내보냈습니다");
+    } catch (e) {
+      showToast(`내보내기 실패: ${String(e)}`);
+    }
+  }
+
   // 라이브러리 내부 카드 이동 드래그(폴더 정리)는 PDF 추출 드롭과 구분한다.
   const isInternalDrag = (e: React.DragEvent) => e.dataTransfer.types.includes("application/x-galpi-move");
 
@@ -228,12 +252,17 @@ export function App() {
     setDragging(false);
     const files = Array.from(e.dataTransfer.files).filter((f) => /\.pdf$/i.test(f.name));
     if (!files.length) return showToast("PDF 파일만 추출할 수 있습니다.");
+    let ok = 0;
+    let firstErr: string | null = null;
     for (const f of files) {
       const path = window.paperAPI.pathForFile(f);
       const res = await window.paperAPI.extractPdf(path);
-      if (res.error) showToast(res.error);
-      else showToast(`추출 시작: ${f.name} — 곧 라이브러리에 나타납니다.`);
+      if (res.error) firstErr ??= res.error;
+      else ok++;
     }
+    if (firstErr) showToast(firstErr);
+    else if (ok === 1) showToast("추출 시작 — 곧 라이브러리에 나타납니다.");
+    else if (ok > 1) showToast(`${ok}개를 추출 대기열에 추가했습니다 — 컴퓨터 보호를 위해 한 번에 하나씩 처리합니다.`);
   }
 
   const openSummary = docs.find((d) => d.doc_id === doc?.doc_id);
@@ -241,6 +270,13 @@ export function App() {
   const footnotes = useMemo(() => (doc ? buildFootnotes(doc.blocks) : null), [doc]);
   const frontMatter = useMemo(() => (doc ? buildFrontMatter(doc.blocks) : null), [doc]);
   const crossRefIndex = useMemo(() => (doc ? buildCrossRefIndex(doc.blocks) : new Map()), [doc]);
+  // 페이지 경계에서 끊긴 문단 잇기 — 각주/프론트매터는 제외하고 인접 판정.
+  const pageMerge = useMemo(() => {
+    if (!doc) return EMPTY_PAGE_MERGE;
+    const hidden = new Set<string>(footnotes?.pulled ?? []);
+    if (frontMatter) { frontMatter.ids.forEach((id) => hidden.add(id)); if (frontMatter.startId) hidden.add(frontMatter.startId); }
+    return buildPageMerges(doc.blocks, hidden);
+  }, [doc, footnotes, frontMatter]);
 
   const dropProps = {
     onDragOver: (e: React.DragEvent) => { if (isInternalDrag(e)) return; e.preventDefault(); setDragging(true); },
@@ -253,7 +289,7 @@ export function App() {
       {doc ? (
         <div className="reader-root" {...dropProps}>
           <header className="reader-bar">
-            <button className="back-btn" onClick={() => { openDocId.current = null; setDoc(null); setInspect(false); setHlPanel(false); setSectionPanel(false); setFocusMode("off"); }}>← 라이브러리</button>
+            <button className="back-btn" onClick={() => { openDocId.current = null; setDoc(null); setInspect(false); setAnnPanel(false); setSectionPanel(false); setFocusMode("off"); }}>← 라이브러리</button>
             <span className="reader-title">{doc.title ?? doc.doc_id}</span>
             {openSummary?.state === "extracting" && (
               <span className="extract-badge">추출 중 {openSummary.pages_done}/{openSummary.page_count}p</span>
@@ -261,13 +297,13 @@ export function App() {
             <button
               className="icon-action reader-find"
               onClick={() => window.dispatchEvent(new Event("galpi:find-open"))}
-              title={`텍스트 검색 · ${displayCombo(keymap.search)}`}
+              data-tip={`검색 · ${displayCombo(keymap.search)}`}
               aria-label="검색"
             >🔎</button>
             <button
               className={`icon-action reader-peek ${inspect ? "on" : ""}`}
               onClick={() => setInspect((v) => !v)}
-              title={`원본 대조 — 원본 PDF와 비교 · ${displayCombo(keymap.sourcePeek)} (또는 ⌥+클릭)`}
+              data-tip={`원본 대조 · ${displayCombo(keymap.sourcePeek)}`}
               aria-label="원본 대조"
               aria-pressed={inspect}
             >
@@ -279,18 +315,42 @@ export function App() {
             <button
               className={`icon-action reader-focus ${focusMode !== "off" ? "on" : ""}`}
               onClick={cycleFocus}
-              title={`포커스 모드: ${focusMode === "off" ? "꺼짐" : focusMode === "paragraph" ? "문단" : "문장"} · ${displayCombo(keymap.focus)}로 전환(문단→문장→끄기) · ←/→ 로 이동`}
-              aria-label="포커스 모드"
+              data-tip={`포커스 · ${displayCombo(keymap.focus)}`}
+              aria-label="포커스"
               aria-pressed={focusMode !== "off"}
             >◎</button>
             <button
               className={`icon-action reader-sections ${sectionPanel ? "on" : ""}`}
               onClick={() => setSectionPanel((v) => !v)}
-              title={`목차 — 섹션 이동 · ${displayCombo(keymap.sections)}`}
+              data-tip={`목차 · ${displayCombo(keymap.sections)}`}
               aria-label="목차"
               aria-pressed={sectionPanel}
             >☰</button>
-            <button className="icon-action reader-gear" onClick={() => setSettingsOpen(true)} title="설정" aria-label="설정">{GEAR}</button>
+            <button
+              className={`icon-action reader-ann ${annPanel ? "on" : ""}`}
+              onClick={() => setAnnPanel((v) => !v)}
+              data-tip={`주석 · ${displayCombo(keymap.annotations)}`}
+              aria-label="주석"
+              aria-pressed={annPanel}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M4 5h12M4 10h12M4 15h7" />
+                <path d="M18.5 13.5l2 2-4.5 4.5H14v-2z" />
+              </svg>
+            </button>
+            <button
+              className="icon-action reader-export"
+              onClick={exportHtml}
+              data-tip="내보내기"
+              aria-label="내보내기"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M12 3v12" />
+                <path d="M8 7l4-4 4 4" />
+                <path d="M5 13v6a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-6" />
+              </svg>
+            </button>
+            <button className="icon-action reader-gear" onClick={() => setSettingsOpen(true)} data-tip="설정" aria-label="설정">{GEAR}</button>
           </header>
           <div className="reader-body">
             <main className="reader-scroll">
@@ -303,8 +363,11 @@ export function App() {
                       return <FrontMatterSection key="fm" items={frontMatter.items} docId={doc.doc_id} />;
                     }
                     if (footnotes?.pulled.has(b.id) || frontMatter?.ids.has(b.id)) return null;
+                    if (pageMerge.absorbed.has(b.id)) return null; // 앞 문단에 흡수된 페이지 분리 조각
                     if (isSpacedLabel(b.text)) return null; // "a b s t r a c t" 류 장식 라벨 숨김
-                    return <BlockRenderer key={b.id} block={b} docId={doc.doc_id} />;
+                    const ov = pageMerge.textOverride.get(b.id);
+                    const block = ov != null ? { ...b, text: ov } : b; // 페이지 넘긴 문단 합치기
+                    return <BlockRenderer key={b.id} block={block} docId={doc.doc_id} />;
                   })}
                   {openSummary?.state === "extracting" && (
                     <p className="extract-more">⏳ 남은 페이지 추출 중… 완료되는 대로 이어집니다.</p>
@@ -314,7 +377,7 @@ export function App() {
                       <summary>각주 {footnotes.ordered.length}개</summary>
                       <ol className="footnotes-list">
                         {footnotes.ordered.map((fn) => (
-                          <li key={fn.label}>
+                          <li key={fn.label} data-fn-item={fn.label}>
                             <span className="fn-list-label">{fn.label}</span>
                             <BlockRenderer
                               block={{ id: `fn-${fn.label}`, type: "footnote", page: 0, bbox: null, text: fn.html }}
@@ -340,7 +403,18 @@ export function App() {
           <FindBar docId={doc.doc_id} blockCount={doc.blocks.length} />
           <SelectionTranslate containerSel=".reader-content" />
           <SourcePeek doc={doc} sticky={inspect} onExitSticky={() => setInspect(false)} />
-          <HighlightLayer doc={doc} panelOpen={hlPanel} onClosePanel={() => setHlPanel(false)} />
+          <HighlightLayer doc={doc} rules={ann.highlights} updateRules={ann.updateHighlights} onCounts={setHlCounts} />
+          <NotesLayer doc={doc} notes={ann.notes} updateNotes={ann.updateNotes} />
+          {annPanel && (
+            <AnnotationsPanel
+              highlights={ann.highlights}
+              notes={ann.notes}
+              counts={hlCounts}
+              updateHighlights={ann.updateHighlights}
+              updateNotes={ann.updateNotes}
+              onClose={() => setAnnPanel(false)}
+            />
+          )}
           <FocusMode mode={focusMode} docId={doc.doc_id} blockCount={doc.blocks.length} />
           <JumpBackButton />
         </div>

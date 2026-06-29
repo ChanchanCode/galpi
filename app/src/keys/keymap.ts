@@ -5,6 +5,9 @@
 export type ActionId =
   | "search"
   | "highlight"
+  | "highlightPassage"
+  | "note"
+  | "annotations"
   | "translate"
   | "sourcePeek"
   | "sections"
@@ -22,7 +25,10 @@ export interface ActionDef {
 // 화면에 떠다니는 UI 없이 키보드로 동작하는 액션들(사용자 요청: text 위 hover UI 금지).
 export const ACTIONS: ActionDef[] = [
   { id: "search", label: "텍스트 검색", hint: "본문에서 단어 찾기 (다음 Enter · 이전 ⇧Enter)", defaultCombo: "Mod+F" },
-  { id: "highlight", label: "형광펜", hint: "선택 후 탭하면 색 순환(노랑→초록→파랑→분홍→보라→해제) · 꾹 누르면 제거", defaultCombo: "H" },
+  { id: "highlightPassage", label: "형광펜", hint: "선택한 그 부분만 칠함 · 탭하면 색 순환(노랑→초록→파랑→분홍→보라→해제) · 꾹 누르면 제거", defaultCombo: "H" },
+  { id: "highlight", label: "키워드 형광펜", hint: "선택한 단어를 문서 전체에서 전부 칠함 · 탭하면 색 순환 · 꾹 누르면 제거", defaultCombo: "Shift+H" },
+  { id: "note", label: "메모", hint: "선택한 문장에 메모 작성(같은 구절을 다시 선택+누르면 편집)", defaultCombo: "M" },
+  { id: "annotations", label: "주석 모아보기", hint: "형광펜·메모를 한 화면에 모아보고 위치로 점프", defaultCombo: "I" },
   { id: "translate", label: "번역", hint: "선택 문장 번역 팝오버", defaultCombo: "T" },
   { id: "sourcePeek", label: "원문 대조", hint: "선택/현재 위치 블록의 원본 PDF 크롭 보기", defaultCombo: "G" },
   { id: "sections", label: "목차 패널", hint: "섹션 목차 패널 열기/닫기 (스크롤 옆 위치 눈금은 항상 표시)", defaultCombo: "Backslash" },
