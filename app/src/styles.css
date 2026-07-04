@@ -160,6 +160,7 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font-family);
 .doc-title { font-size: 1.05rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .doc-sub { font-size: 0.85rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .doc-foot { font-size: 0.78rem; color: var(--muted); display: flex; gap: 6px; align-items: center; margin-top: 2px; }
+.doc-foot .foot-error { color: #d2674a; }
 .doc-dot { opacity: 0.6; }
 .finish-toggle {
   flex: none; font-size: 0.8rem; padding: 6px 12px; border-radius: 999px; cursor: pointer;
@@ -332,6 +333,26 @@ body.peek-dragging, body.peek-dragging * { cursor: grabbing !important; user-sel
     var(--muted) 66% 76%, transparent 76% 100%);
 }
 .peek-resize:hover { opacity: 1; }
+/* 수식 LaTeX 인라인 편집 (§11-10) — 팝오버 하단 */
+.peek-eq-edit {
+  border-top: 1px solid var(--rule); padding: 8px 10px;
+  display: flex; flex-direction: column; gap: 6px;
+  background: var(--bg);
+}
+.peek-eq-input {
+  width: 100%; box-sizing: border-box; resize: none;
+  font-family: ui-monospace, monospace; font-size: 0.78rem; line-height: 1.4;
+  background: transparent; color: var(--fg);
+  border: 1px solid var(--rule); border-radius: 6px; padding: 5px 8px; outline: none;
+}
+.peek-eq-input:focus { border-color: var(--accent); }
+.peek-eq-row { display: flex; align-items: center; gap: 8px; min-height: 30px; }
+.peek-eq-preview {
+  flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap;
+  font-size: 0.9rem; color: var(--fg);
+}
+.peek-eq-err { flex: 1; color: var(--accent); font-size: 0.78rem; }
+.peek-eq-btns { display: flex; gap: 6px; flex: none; }
 /* 디버그 오버레이 (§9.3-2) */
 .peek-debug { position: fixed; inset: 0; z-index: 110; background: rgba(0,0,0,0.78); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; }
 .peek-debug-bar { display: flex; align-items: center; gap: 12px; color: #eee; font-size: 0.85rem; }
@@ -524,6 +545,15 @@ body[data-hl-dim="on"] .reader-content ::selection { background: transparent; }
 
 /* ── 섹션 이동: 스크롤 옆 위치 눈금(고정) + 버튼으로 여는 목차 패널 ── */
 /* 위치 눈금 — 스크롤바(16px) 바로 왼쪽 얇은 띠. 항상 표시(떴다 사라지지 않음), 시각 전용. */
+/* 현재 섹션 스티키 라벨 — 본문 좌상단, 은은하게 */
+.section-sticky {
+  position: absolute; top: 8px; left: 16px; z-index: 34; pointer-events: none;
+  max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 0.72rem; color: var(--muted);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  padding: 3px 8px; border-radius: 6px;
+}
+
 .section-minimap { position: absolute; top: 0; right: 18px; bottom: 0; width: 9px; z-index: 35; pointer-events: none; }
 .section-progress {
   position: absolute; right: 0; width: 9px; height: 2px;
@@ -677,6 +707,7 @@ body[data-hl-dim="on"] .reader-content ::selection { background: transparent; }
 /* ── 드래그-드롭 추출 오버레이 + 토스트 ── */
 .drop-overlay {
   position: fixed; inset: 0; z-index: 90;
+  pointer-events: none; /* 드롭은 window 레벨에서 처리 — 오버레이가 드래그 이벤트를 가로채면 플리커 */
   background: color-mix(in srgb, var(--accent) 18%, transparent);
   border: 3px dashed var(--accent); border-radius: 12px;
   display: flex; align-items: center; justify-content: center;
@@ -686,6 +717,41 @@ body[data-hl-dim="on"] .reader-content ::selection { background: transparent; }
   border: 1px solid var(--accent); border-radius: 12px;
   padding: 18px 26px; font-size: 1.05rem; box-shadow: 0 8px 28px rgba(0,0,0,0.3);
 }
+/* ── 퀵 스위처 (⌘P) — 최근 문서 전환 ── */
+.qs-backdrop {
+  position: fixed; inset: 0; z-index: 110;
+  background: rgba(0, 0, 0, 0.25);
+  display: flex; justify-content: center; align-items: flex-start;
+  padding-top: 14vh;
+}
+.qs-box {
+  width: 520px; max-width: 88vw;
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--rule); border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+.qs-input {
+  width: 100%; box-sizing: border-box;
+  padding: 12px 14px; border: none; outline: none;
+  background: transparent; color: var(--fg);
+  font-size: 1rem; border-bottom: 1px solid var(--rule);
+}
+.qs-list {
+  list-style: none; margin: 0; padding: 6px;
+  max-height: 46vh; overflow-y: auto;
+}
+.qs-item {
+  display: flex; flex-direction: column; gap: 2px; width: 100%;
+  padding: 8px 10px; border: none; border-radius: 8px;
+  background: transparent; color: var(--fg);
+  text-align: left; cursor: pointer; font: inherit;
+}
+.qs-item.on { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.qs-title { font-size: 0.92rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qs-sub { font-size: 0.78rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qs-none { padding: 12px; color: var(--muted); font-size: 0.85rem; text-align: center; }
+
 .toast {
   position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 120;
   background: var(--fg); color: var(--bg);

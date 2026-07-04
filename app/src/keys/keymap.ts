@@ -3,6 +3,8 @@
 // 바인딩은 전역 settings.json(useStore) 에 영속되고, 단축키 설정 창에서 편집한다.
 
 export type ActionId =
+  | "openPdf"
+  | "quickSwitch"
   | "search"
   | "highlight"
   | "highlightPassage"
@@ -24,6 +26,8 @@ export interface ActionDef {
 
 // 화면에 떠다니는 UI 없이 키보드로 동작하는 액션들(사용자 요청: text 위 hover UI 금지).
 export const ACTIONS: ActionDef[] = [
+  { id: "openPdf", label: "PDF 열기", hint: "PDF 파일을 골라 추출 시작 (드래그해 놓아도 동일)", defaultCombo: "Mod+O" },
+  { id: "quickSwitch", label: "문서 전환", hint: "최근 읽은 문서 목록에서 바로 전환 (↑↓ · Enter)", defaultCombo: "Mod+P" },
   { id: "search", label: "텍스트 검색", hint: "본문에서 단어 찾기 (다음 Enter · 이전 ⇧Enter)", defaultCombo: "Mod+F" },
   { id: "highlightPassage", label: "형광펜", hint: "선택한 그 부분만 칠함 · 탭하면 색 순환(노랑→초록→파랑→분홍→보라→해제) · 꾹 누르면 제거", defaultCombo: "H" },
   { id: "highlight", label: "키워드 형광펜", hint: "선택한 단어를 문서 전체에서 전부 칠함 · 탭하면 색 순환 · 꾹 누르면 제거", defaultCombo: "Shift+H" },

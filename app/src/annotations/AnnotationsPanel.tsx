@@ -20,6 +20,7 @@ interface Props {
   counts: Record<string, number>;
   updateHighlights: (updater: (prev: HighlightRule[]) => HighlightRule[]) => void;
   updateNotes: (updater: (prev: Note[]) => Note[]) => void;
+  onCopyMd: () => void;
   onClose: () => void;
 }
 
@@ -45,6 +46,7 @@ export function AnnotationsPanel({
   counts,
   updateHighlights,
   updateNotes,
+  onCopyMd,
   onClose,
 }: Props) {
   const [tab, setTab] = useState<Tab>("all");
@@ -95,6 +97,12 @@ export function AnnotationsPanel({
     <aside className="hl-panel" onMouseDown={(e) => e.stopPropagation()}>
       <div className="hl-panel-head">
         <span>주석 모아보기</span>
+        <button className="icon-btn" onClick={onCopyMd} title="Markdown 복사" aria-label="Markdown 복사">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <rect x="9" y="9" width="12" height="12" rx="2" />
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+          </svg>
+        </button>
         <button className="icon-btn" onClick={onClose} aria-label="닫기">✕</button>
       </div>
 

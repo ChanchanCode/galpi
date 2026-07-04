@@ -66,6 +66,11 @@ const api = {
   pathForFile: (file: File): string => webUtils.getPathForFile(file),
   extractPdf: (pdfPath: string): Promise<{ started?: boolean; error?: string }> =>
     ipcRenderer.invoke("pipeline:extract", pdfPath),
+  // PDF 파일 선택 다이얼로그 (⌘O) — 선택한 경로들 반환
+  pickPdfs: (): Promise<string[]> => ipcRenderer.invoke("pdf:pick"),
+  // 재추출 — 같은 doc_id 로 다시 추출(주석 보존)
+  reextractDoc: (docId: string): Promise<{ started?: boolean; error?: string }> =>
+    ipcRenderer.invoke("pipeline:reextract", docId),
   // 읽기 상태 부분 갱신 (완독 토글 / 최근 읽음 기록)
   updateReading: (docId: string, patch: Record<string, unknown>): Promise<unknown> =>
     ipcRenderer.invoke("reading:update", docId, patch),

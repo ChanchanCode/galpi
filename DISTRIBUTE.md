@@ -77,6 +77,17 @@ bash "/Applications/갈피.app/Contents/Resources/pipeline/setup-mac.sh"
   최신 `.dmg` 를 받아 다시 설치한다. (설정/문서/추출 엔진은 그대로 유지됨)
 - 추출 엔진은 보통 그대로 재사용된다. requirements 가 바뀐 큰 업데이트면 셋업 스크립트를 다시 실행.
 
+## D. 완전 삭제
+앱(.app)만 휴지통에 버리면 추출 엔진(~1.7GB)·MinerU 모델 캐시(~3.2GB)·문서 데이터가 남는다.
+전부 지우려면:
+```bash
+./pipeline/uninstall-mac.sh
+```
+문서·형광펜·메모 삭제 여부는 스크립트가 따로 물어본다. 남는 위치(수동 삭제 시):
+- `~/Library/Application Support/Galpi` — 문서·주석·설정 + `pyenv/`(추출 엔진)
+- `~/.cache/huggingface/hub/models--opendatalab--*` — MinerU 모델
+- `~/Library/Application Support/갈피` — Electron 캐시
+
 ## 참고 — 진짜 자동 업데이트가 필요해지면
 Apple Developer Program($99/년) 가입 → 서명 + 공증 → `electron-updater` 도입 시,
 앱이 백그라운드로 새 릴리스를 받아 다음 실행 때 자동 적용된다. (지금 구조에서 추가 가능)

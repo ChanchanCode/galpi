@@ -14,6 +14,89 @@ from pathlib import Path
 import fitz
 
 
+# 메타데이터 title 이 실제 제목이 아닌 흔한 쓰레기 값 — 워드프로세서 이름, 파일명(.doc 등),
+# 문서번호(PII/DOI), URL. 옛 논문·SSRN·Elsevier 스캔본에서 빈번.
+_JUNK_TITLE = re.compile(
+    r"^(microsoft (word|powerpoint)|powerpoint presentation|corel|wordperfect|acrobat|"
+    r"untitled|제목 없음|slide \d)|"
+    r"\.(docx?|dvi|tex|qxd|indd|wpd|rtf|pptx?|pdf)\s*$|"
+    r"^(pii|doi)\s*:|^https?://",
+    re.I,
+)
+
+
+def _usable_title(title: str | None) -> str | None:
+    """메타데이터 제목이 진짜 제목으로 쓸 만한지 — 아니면 None(폴백 유도)."""
+    if not title or len(title) < 6:
+        return None
+    if _JUNK_TITLE.search(title):
+        return None
+    if not re.search(r"[A-Za-zÀ-ÿ가-힣]{3}", title):  # 글자 없는 번호/기호뿐
+        return None
+    return title
+
+
+def _plausible_authors(s: str | None) -> bool:
+    """사람 이름다운가 — 대문자 시작 토큰 2개 이상('ack', 'petersen' 류 계정명 거부)."""
+    return bool(s) and len(re.findall(r"\b[A-ZÀ-Þ][A-Za-zÀ-ÿ’'.-]+", s)) >= 2
+
+
+def _title_from_page1(doc: fitz.Document) -> str | None:
+    """1페이지에서 가장 큰 글꼴 줄(들)을 제목으로 — 메타데이터가 없거나 쓰레기일 때 폴백.
+
+    저널 배너/로고 오탐 방지: 후보는 단어 2개 이상 + 12자 이상 + 페이지 상단 60%.
+    본문과 크기 차이가 없으면(스캔 페이지·플랫 조판) 포기하고 None.
+    """
+    if not doc.page_count:
+        return None
+    page = doc[0]
+    page_h = page.rect.height or 1
+    lines: list[tuple[float, float, str]] = []  # (y, size, text)
+    for blk in page.get_text("dict")["blocks"]:
+        if blk.get("type") != 0:
+            continue
+        for ln in blk["lines"]:
+            text = re.sub(r"\s+", " ", "".join(s["text"] for s in ln["spans"])).strip()
+            if not text:
+                continue
+            size = max(s["size"] for s in ln["spans"])
+            lines.append((ln["bbox"][1], size, text))
+    if not lines:
+        return None
+    lines.sort(key=lambda t: t[0])
+
+    cand = [
+        (y, size, t)
+        for y, size, t in lines
+        if len(t) >= 12 and len(t.split()) >= 2 and y < page_h * 0.6
+        and re.search(r"[A-Za-zÀ-ÿ가-힣]", t)
+    ]
+    if not cand:
+        return None
+    max_size = max(size for _, size, _ in cand)
+    sizes = sorted(size for _, size, _ in lines)
+    median = sizes[len(sizes) // 2]
+    if max_size < median * 1.15:  # 본문과 구분 안 됨 → 오탐 위험, 포기
+        return None
+
+    # 첫 최대 크기 후보를 시드로, 바로 이어지는 비슷한 크기 줄을 제목 연속으로 합침
+    cand_set = {(y, size, t) for y, size, t in cand}
+    seed_idx = next(
+        i for i, line in enumerate(lines)
+        if line in cand_set and line[1] >= max_size - 0.3
+    )
+    seed_y, seed_size, _ = lines[seed_idx]
+    parts: list[str] = []
+    prev_y = seed_y
+    for y, size, t in lines[seed_idx:]:
+        if size < seed_size - 0.7 or y - prev_y > seed_size * 3 or len(parts) >= 4:
+            break
+        parts.append(t)
+        prev_y = y
+    title = re.sub(r"\s+", " ", " ".join(parts)).strip()
+    return title if len(title) >= 12 and len(title) <= 300 else None
+
+
 def _clean_authors(line: str) -> str:
     """저자 줄에서 소속 마커(위첨자 a,b, ∗ 등) 제거 → 'A, B' 형태."""
     s = html.unescape(line)
@@ -64,9 +147,9 @@ def _authors_from_page1(doc: fitz.Document, title: str | None) -> str | None:
     if title_end < 0:
         return None
 
-    # 제목 끝 다음부터 STOP 전까지 수집(최대 3줄)
+    # 제목 끝 다음부터 STOP 전까지 수집(최대 5줄 — 저자 줄이 여러 줄로 쪼개지는 경우)
     collected: list[str] = []
-    for ln in lines[title_end + 1 : title_end + 4]:
+    for ln in lines[title_end + 1 : title_end + 6]:
         if _STOP.search(ln):
             break
         collected.append(ln)
@@ -93,14 +176,20 @@ def _journal_from_subject(subject: str | None) -> str | None:
 
 
 def extract_paper_meta(pdf_path: Path) -> dict:
-    """{title, authors, journal} 반환 (없으면 각 항목 None)."""
+    """{title, authors, journal} 반환 (없으면 각 항목 None).
+
+    제목: 메타데이터(쓰레기 값 거부) → 1페이지 최대 글꼴 폴백 → None
+    (None 이면 build_document 가 첫 heading 블록으로 최종 폴백).
+    """
     with fitz.open(pdf_path) as doc:
         md = doc.metadata or {}
-        title = html.unescape((md.get("title") or "").strip()) or None
+        title = _usable_title(html.unescape((md.get("title") or "").strip()))
+        if not title:
+            title = _title_from_page1(doc)
         journal = _journal_from_subject(md.get("subject"))
-        # 저자: 본문 파싱 우선(전체 목록), 실패 시 메타데이터(1저자)
+        # 저자: 본문 파싱 우선(전체 목록), 실패 시 메타데이터(계정명 류 거부)
         authors = _authors_from_page1(doc, title)
         if not authors:
             meta_author = html.unescape((md.get("author") or "").strip())
-            authors = meta_author or None
+            authors = meta_author if _plausible_authors(meta_author) else None
     return {"title": title, "authors": authors, "journal": journal}

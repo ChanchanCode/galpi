@@ -6,6 +6,7 @@
 //        scale = image_px / size_pt  (= dpi/72, 예: 200/72 ≈ 2.778)
 //   디버그 오버레이(Alt+Shift+D)로 박스 정합을 눈으로 검증할 수 있다.
 import { useEffect, useMemo, useRef, useState } from "react";
+import katex from "katex";
 import type { Block, PageInfo, PaperDocument } from "../types";
 import { useStore } from "../store/useStore";
 import { isEditableTarget, matchCombo } from "../keys/keymap";
@@ -14,6 +15,7 @@ const PAD_PT = 6; // crop 여백(PDF point) — 맥락이 보이도록 살짝 �
 const MIN_SCALE = 0.1;
 const MAX_SCALE = 16;
 const HEADER_H = 38;
+const EQ_EDIT_H = 128; // 수식 블록일 때 하단 LaTeX 편집 영역 높이
 
 interface CropTarget {
   block: Block;
@@ -28,9 +30,12 @@ interface Props {
   /** 외부(리더 바 🔍 버튼)에서 토글하는 고정 검사 모드 */
   sticky: boolean;
   onExitSticky: () => void;
+  /** 수식 LaTeX 수동 수정 (§11-10) — 팝오버 안에서 고치고 저장 */
+  formulaEdits: Record<string, string>;
+  onEditFormula: (blockId: string, latex: string | null) => void;
 }
 
-export function SourcePeek({ doc, sticky, onExitSticky }: Props) {
+export function SourcePeek({ doc, sticky, onExitSticky, formulaEdits, onEditFormula }: Props) {
   const peekCombo = useStore((s) => s.keymap.sourcePeek);
   const [altHeld, setAltHeld] = useState(false);
   const [target, setTarget] = useState<CropTarget | null>(null);
@@ -181,9 +186,12 @@ export function SourcePeek({ doc, sticky, onExitSticky }: Props) {
     <>
       {target && (
         <CropPopover
+          key={target.block.id} // 블록 전환 시 초기 뷰/수식 초안 리셋
           target={target}
           docId={doc.doc_id}
           boxRef={boxRef}
+          editedLatex={formulaEdits[target.block.id] ?? null}
+          onEditFormula={onEditFormula}
           onClose={() => setTarget(null)}
         />
       )}
@@ -237,17 +245,22 @@ function CropPopover({
   target,
   docId,
   boxRef,
+  editedLatex,
+  onEditFormula,
   onClose,
 }: {
   target: CropTarget;
   docId: string;
   boxRef: React.RefObject<HTMLDivElement>;
+  editedLatex: string | null;
+  onEditFormula: (blockId: string, latex: string | null) => void;
   onClose: () => void;
 }) {
   const { block, page } = target;
   const crop = cropRectPx(block, page);
   const imgUrl = window.paperAPI.assetUrl(docId, page.image);
   const viewportRef = useRef<HTMLDivElement>(null);
+  const isFormula = block.type === "formula";
 
   // 이 블록이 원본에서 차지하는 정확한 영역(이미지 픽셀) — 형광펜 표시용. bbox 없으면 생략.
   const hlBox = (() => {
@@ -280,7 +293,7 @@ function CropPopover({
   });
 
   const viewW = win.w;
-  const viewH = win.h - HEADER_H;
+  const viewH = win.h - HEADER_H - (isFormula ? EQ_EDIT_H : 0);
 
   // ── 드래그(창 이동 / 크기조절 / 팬) ──────────────────────────────
   const drag = useRef<{ mode: DragMode; sx: number; sy: number; win: WinState; view: ViewState } | null>(null);
@@ -393,7 +406,73 @@ function CropPopover({
           />
         )}
       </div>
+      {isFormula && (
+        <FormulaEditor block={block} editedLatex={editedLatex} onEditFormula={onEditFormula} />
+      )}
       <div className="peek-resize" onPointerDown={(e) => startDrag("resize", e)} title="크기 조절" />
+    </div>
+  );
+}
+
+// ── 수식 LaTeX 인라인 편집 (§11-10) — 원본 crop 을 보면서 고치고 저장 ──────
+// 저장은 state.json formula_edits(사이드카)로 — 재추출해도 수정본이 유지된다.
+function FormulaEditor({
+  block,
+  editedLatex,
+  onEditFormula,
+}: {
+  block: Block;
+  editedLatex: string | null;
+  onEditFormula: (blockId: string, latex: string | null) => void;
+}) {
+  const original = block.latex ?? "";
+  const [draft, setDraft] = useState(editedLatex ?? original);
+  const preview = useMemo(() => {
+    if (!draft.trim()) return null;
+    try {
+      return katex.renderToString(draft, { displayMode: false, throwOnError: true, strict: false });
+    } catch {
+      return null;
+    }
+  }, [draft]);
+  const saved = editedLatex ?? original;
+
+  return (
+    <div className="peek-eq-edit" onPointerDown={(e) => e.stopPropagation()}>
+      <textarea
+        className="peek-eq-input"
+        value={draft}
+        rows={2}
+        spellCheck={false}
+        onChange={(e) => setDraft(e.target.value)}
+      />
+      <div className="peek-eq-row">
+        {preview ? (
+          <span className="peek-eq-preview" dangerouslySetInnerHTML={{ __html: preview }} />
+        ) : (
+          <span className="peek-eq-err">{draft.trim() ? "렌더 실패" : ""}</span>
+        )}
+        <span className="peek-eq-btns">
+          {editedLatex != null && (
+            <button
+              className="peek-btn"
+              onClick={() => {
+                onEditFormula(block.id, null);
+                setDraft(original);
+              }}
+            >
+              원래대로
+            </button>
+          )}
+          <button
+            className="peek-btn"
+            disabled={draft === saved || !draft.trim()}
+            onClick={() => onEditFormula(block.id, draft === original ? null : draft)}
+          >
+            저장
+          </button>
+        </span>
+      </div>
     </div>
   );
 }

@@ -10,6 +10,8 @@ import { ReadingContext } from "./render/reading";
 import { FocusMode, type FocusKind } from "./focus/FocusMode";
 import { JumpBackButton } from "./nav/JumpBackButton";
 import { resetJumpHistory, undoJump } from "./nav/jump";
+import { useScrollMemory } from "./nav/useScrollMemory";
+import { QuickSwitcher } from "./nav/QuickSwitcher";
 import { displayCombo } from "./keys/keymap";
 import { Library } from "./library/Library";
 import { buildFrontMatter, deSpaceLabel, isSpacedLabel } from "./render/frontmatter";
@@ -22,6 +24,7 @@ import { NotesLayer } from "./notes/NotesLayer";
 import { AnnotationsPanel } from "./annotations/AnnotationsPanel";
 import { useAnnotations } from "./annotations/useAnnotations";
 import { exportDocToHtml } from "./export/exportHtml";
+import { buildAnnotationsMarkdown } from "./annotations/exportMd";
 import { FindBar } from "./search/FindBar";
 import { SectionRail } from "./sections/SectionRail";
 import { ShortcutsPanel } from "./keys/ShortcutsPanel";
@@ -61,6 +64,7 @@ export function App() {
   const [sectionPanel, setSectionPanel] = useState(false);
   const [focusMode, setFocusMode] = useState<FocusKind>("off");
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [switcherOpen, setSwitcherOpen] = useState(false);
   const openDocId = useRef<string | null>(null);
   // 방향키 페이지 이동: 목표 위치를 누적해 lerp (연타해도 위치가 더해짐, 감속 없음)
   const scrollTarget = useRef<number | null>(null);
@@ -70,6 +74,8 @@ export function App() {
   const typography = useStore((s) => s.typography);
   const userFonts = useStore((s) => s.userFonts);
   const keymap = useStore((s) => s.keymap);
+  const openPdfCombo = useStore((s) => s.keymap.openPdf);
+  const quickSwitchCombo = useStore((s) => s.keymap.quickSwitch);
   const sectionsCombo = useStore((s) => s.keymap.sections);
   const focusCombo = useStore((s) => s.keymap.focus);
   const cycleFocus = () => setFocusMode((m) => (m === "off" ? "paragraph" : m === "paragraph" ? "sentence" : "off"));
@@ -82,6 +88,9 @@ export function App() {
 
   // 주석(형광펜 + 메모) 단일 소유 — 리더/패널이 공유. 문서 없으면 빈 상태.
   const ann = useAnnotations(doc?.doc_id ?? null);
+
+  // 읽던 위치 기억/복원 (state.json scroll_anchor)
+  useScrollMemory(doc?.doc_id ?? null);
 
   useEffect(() => {
     initSession();
@@ -127,6 +136,24 @@ export function App() {
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [doc, sectionsCombo, annotationsCombo, focusCombo, bionicCombo, sentenceCombo, reading.bionic, reading.sentenceBreak, setReading]);
+
+  // ⌘O — PDF 파일 선택해 추출 / ⌘P — 퀵 스위처 (라이브러리·리더 어디서나)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (matchCombo(e, quickSwitchCombo)) {
+        e.preventDefault(); // 입력 필드에서도 동작(스위처 안에서 재입력 시 토글)
+        setSwitcherOpen((v) => !v);
+        return;
+      }
+      if (isEditableTarget(e.target)) return;
+      if (matchCombo(e, openPdfCombo)) {
+        e.preventDefault();
+        void window.paperAPI.pickPdfs().then(extractPaths);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [openPdfCombo, quickSwitchCombo]);
 
   // 문서 전환 시 점프 히스토리 초기화 (라이브러리로 나가면 doc=null → 초기화)
   useEffect(() => {
@@ -231,6 +258,21 @@ export function App() {
     setTimeout(() => setToast(null), 4000);
   }
 
+  // PDF 경로들 추출 시작 — 드래그-드롭과 ⌘O 파일 선택이 공용.
+  async function extractPaths(paths: string[]) {
+    if (!paths.length) return;
+    let ok = 0;
+    let firstErr: string | null = null;
+    for (const p of paths) {
+      const res = await window.paperAPI.extractPdf(p);
+      if (res.error) firstErr ??= res.error;
+      else ok++;
+    }
+    if (firstErr) showToast(firstErr);
+    else if (ok === 1) showToast("추출 시작 — 곧 라이브러리에 나타납니다.");
+    else if (ok > 1) showToast(`${ok}개를 추출 대기열에 추가했습니다 — 컴퓨터 보호를 위해 한 번에 하나씩 처리합니다.`);
+  }
+
   // 현재 문서를 자립형 HTML 로 내보내기(현재 타이포 프리셋 그대로) → AirDrop 용.
   async function exportHtml() {
     if (!doc) return;
@@ -242,28 +284,60 @@ export function App() {
     }
   }
 
-  // 라이브러리 내부 카드 이동 드래그(폴더 정리)는 PDF 추출 드롭과 구분한다.
-  const isInternalDrag = (e: React.DragEvent) => e.dataTransfer.types.includes("application/x-galpi-move");
-
-  // 드래그-드롭 PDF → 추출 시작
-  async function onDrop(e: React.DragEvent) {
-    if (isInternalDrag(e)) return;
-    e.preventDefault();
-    setDragging(false);
-    const files = Array.from(e.dataTransfer.files).filter((f) => /\.pdf$/i.test(f.name));
-    if (!files.length) return showToast("PDF 파일만 추출할 수 있습니다.");
-    let ok = 0;
-    let firstErr: string | null = null;
-    for (const f of files) {
-      const path = window.paperAPI.pathForFile(f);
-      const res = await window.paperAPI.extractPdf(path);
-      if (res.error) firstErr ??= res.error;
-      else ok++;
-    }
-    if (firstErr) showToast(firstErr);
-    else if (ok === 1) showToast("추출 시작 — 곧 라이브러리에 나타납니다.");
-    else if (ok > 1) showToast(`${ok}개를 추출 대기열에 추가했습니다 — 컴퓨터 보호를 위해 한 번에 하나씩 처리합니다.`);
+  // 주석을 Markdown 으로 클립보드 복사 (주석 패널 버튼)
+  async function copyAnnotationsMd() {
+    if (!doc) return;
+    if (!ann.highlights.length && !ann.notes.length) return showToast("형광펜·메모 없음");
+    const md = buildAnnotationsMarkdown(doc.title ?? doc.doc_id, ann.highlights, ann.notes);
+    await navigator.clipboard.writeText(md);
+    showToast("주석을 Markdown으로 복사했습니다");
   }
+
+  // 드래그-드롭 PDF → 추출 시작.
+  // 오버레이가 마운트되며 원래 요소에 dragleave 가 튀는 플리커를 피하려고
+  // window 레벨에서 enter/leave 깊이를 세고, 오버레이는 pointer-events:none 으로 둔다.
+  // 라이브러리 내부 카드 이동 드래그(application/x-galpi-move)는 제외.
+  useEffect(() => {
+    let depth = 0;
+    const isFileDrag = (e: DragEvent) => {
+      const t = e.dataTransfer?.types;
+      return !!t && t.includes("Files") && !t.includes("application/x-galpi-move");
+    };
+    const onEnter = (e: DragEvent) => {
+      if (!isFileDrag(e)) return;
+      e.preventDefault();
+      depth++;
+      setDragging(true);
+    };
+    const onOver = (e: DragEvent) => {
+      if (!isFileDrag(e)) return;
+      e.preventDefault(); // drop 허용
+    };
+    const onLeave = (e: DragEvent) => {
+      if (!isFileDrag(e)) return;
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) setDragging(false);
+    };
+    const onDrop = async (e: DragEvent) => {
+      if (!isFileDrag(e)) return;
+      e.preventDefault();
+      depth = 0;
+      setDragging(false);
+      const files = Array.from(e.dataTransfer?.files ?? []).filter((f) => /\.pdf$/i.test(f.name));
+      if (!files.length) return showToast("PDF 파일만 추출할 수 있습니다.");
+      await extractPaths(files.map((f) => window.paperAPI.pathForFile(f)));
+    };
+    window.addEventListener("dragenter", onEnter);
+    window.addEventListener("dragover", onOver);
+    window.addEventListener("dragleave", onLeave);
+    window.addEventListener("drop", onDrop);
+    return () => {
+      window.removeEventListener("dragenter", onEnter);
+      window.removeEventListener("dragover", onOver);
+      window.removeEventListener("dragleave", onLeave);
+      window.removeEventListener("drop", onDrop);
+    };
+  }, []);
 
   const openSummary = docs.find((d) => d.doc_id === doc?.doc_id);
   const cssVars = toCssVars(typography) as CSSProperties;
@@ -278,16 +352,10 @@ export function App() {
     return buildPageMerges(doc.blocks, hidden);
   }, [doc, footnotes, frontMatter]);
 
-  const dropProps = {
-    onDragOver: (e: React.DragEvent) => { if (isInternalDrag(e)) return; e.preventDefault(); setDragging(true); },
-    onDragLeave: (e: React.DragEvent) => { if (e.currentTarget === e.target) setDragging(false); },
-    onDrop,
-  };
-
   return (
     <>
       {doc ? (
-        <div className="reader-root" {...dropProps}>
+        <div className="reader-root">
           <header className="reader-bar">
             <button className="back-btn" onClick={() => { openDocId.current = null; setDoc(null); setInspect(false); setAnnPanel(false); setSectionPanel(false); setFocusMode("off"); }}>← 라이브러리</button>
             <span className="reader-title">{doc.title ?? doc.doc_id}</span>
@@ -366,7 +434,9 @@ export function App() {
                     if (pageMerge.absorbed.has(b.id)) return null; // 앞 문단에 흡수된 페이지 분리 조각
                     if (isSpacedLabel(b.text)) return null; // "a b s t r a c t" 류 장식 라벨 숨김
                     const ov = pageMerge.textOverride.get(b.id);
-                    const block = ov != null ? { ...b, text: ov } : b; // 페이지 넘긴 문단 합치기
+                    let block = ov != null ? { ...b, text: ov } : b; // 페이지 넘긴 문단 합치기
+                    const fe = b.type === "formula" ? ann.formulaEdits[b.id] : undefined;
+                    if (fe != null) block = { ...block, latex: fe }; // 수동 고친 LaTeX (§11-10)
                     return <BlockRenderer key={b.id} block={block} docId={doc.doc_id} />;
                   })}
                   {openSummary?.state === "extracting" && (
@@ -402,7 +472,13 @@ export function App() {
           </div>
           <FindBar docId={doc.doc_id} blockCount={doc.blocks.length} />
           <SelectionTranslate containerSel=".reader-content" />
-          <SourcePeek doc={doc} sticky={inspect} onExitSticky={() => setInspect(false)} />
+          <SourcePeek
+            doc={doc}
+            sticky={inspect}
+            onExitSticky={() => setInspect(false)}
+            formulaEdits={ann.formulaEdits}
+            onEditFormula={ann.setFormulaEdit}
+          />
           <HighlightLayer doc={doc} rules={ann.highlights} updateRules={ann.updateHighlights} onCounts={setHlCounts} />
           <NotesLayer doc={doc} notes={ann.notes} updateNotes={ann.updateNotes} />
           {annPanel && (
@@ -412,6 +488,7 @@ export function App() {
               counts={hlCounts}
               updateHighlights={ann.updateHighlights}
               updateNotes={ann.updateNotes}
+              onCopyMd={copyAnnotationsMd}
               onClose={() => setAnnPanel(false)}
             />
           )}
@@ -425,14 +502,21 @@ export function App() {
           onToggleFinished={toggleFinished}
           onRefresh={refreshDocs}
           onOpenSettings={() => setSettingsOpen(true)}
-          dropProps={dropProps}
         />
       )}
 
       {dragging && (
-        <div className="drop-overlay" {...dropProps}>
+        <div className="drop-overlay">
           <div className="drop-hint">📄 여기에 PDF를 놓으면 추출을 시작합니다</div>
         </div>
+      )}
+      {switcherOpen && (
+        <QuickSwitcher
+          docs={docs}
+          currentId={doc?.doc_id ?? null}
+          onOpen={(id) => void open(id)}
+          onClose={() => setSwitcherOpen(false)}
+        />
       )}
       {toast && <div className="toast">{toast}</div>}
       {settingsOpen && (

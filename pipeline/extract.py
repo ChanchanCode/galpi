@@ -91,7 +91,10 @@ def run_streaming(args, pdf_path: Path, doc_id: str, workdir: Path) -> int:
        매 청크마다 document.json·status 원자적 갱신(뷰어가 라이브로 읽어 이어붙임).
     """
     # 원본 사본 (대조용, §4.1) — 먼저 복사해 Source Peek 도 바로 가능
-    shutil.copy2(pdf_path, workdir / "source.pdf")
+    # (재추출은 workdir 의 source.pdf 자체가 입력 → 자기복사 생략)
+    src_copy = workdir / "source.pdf"
+    if pdf_path.resolve() != src_copy.resolve():
+        shutil.copy2(pdf_path, src_copy)
 
     # 0) 서지정보(제목/저자/저널) — PDF 메타데이터 + 1페이지 파싱
     meta = paper_meta.extract_paper_meta(pdf_path)
@@ -151,6 +154,9 @@ def main() -> int:
                     help="MinerU 출력 구조만 덤프하고 종료 (§14-2 캘리브레이션)")
     ap.add_argument("--skip-mineru", action="store_true",
                     help="기존 MinerU 출력 재사용(재추출 생략). 파싱·빌드만 재실행.")
+    ap.add_argument("--doc-id", default=None,
+                    help="doc_id 강제 지정 — 재추출 시 기존 문서 폴더를 그대로 갱신"
+                         "(source.pdf 로 재추출하면 파일명이 달라 새 id 가 생기는 것 방지)")
     args = ap.parse_args()
 
     pdf_path: Path = args.pdf.expanduser().resolve()
@@ -159,7 +165,7 @@ def main() -> int:
         return 1
 
     output_root = (args.output_root or default_output_root()).expanduser()
-    doc_id = make_doc_id(pdf_path)
+    doc_id = args.doc_id or make_doc_id(pdf_path)
     workdir = output_root / doc_id
     workdir.mkdir(parents=True, exist_ok=True)
     print(f"[extract] doc_id={doc_id}\n[extract] workdir={workdir}")

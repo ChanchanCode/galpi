@@ -101,7 +101,10 @@ export function NotesLayer({ doc, notes, updateNotes }: Props) {
     return () => {
       container.removeEventListener("mousemove", onMove);
       container.removeEventListener("mouseleave", onLeave);
-      if (hoverRaf.current != null) cancelAnimationFrame(hoverRaf.current);
+      if (hoverRaf.current != null) {
+        cancelAnimationFrame(hoverRaf.current);
+        hoverRaf.current = null; // 남겨두면 다음 effect 의 스로틀이 영구히 막힘
+      }
     };
   }, [doc]);
 

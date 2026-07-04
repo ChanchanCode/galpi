@@ -252,6 +252,15 @@ ipcMain.handle("settings:save", async (_e, settings: unknown) => {
   return true;
 });
 
+// PDF 파일 선택 (⌘O) — 반환된 경로로 렌더러가 드래그-드롭과 동일하게 추출 시작.
+ipcMain.handle("pdf:pick", async () => {
+  const res = await dialog.showOpenDialog({
+    properties: ["openFile", "multiSelections"],
+    filters: [{ name: "PDF", extensions: ["pdf"] }],
+  });
+  return res.canceled ? [] : res.filePaths;
+});
+
 // 사용자 폰트 파일 선택 (§6.3).
 ipcMain.handle("fonts:pick", async () => {
   const res = await dialog.showOpenDialog({
@@ -266,6 +275,32 @@ ipcMain.handle("fonts:pick", async () => {
     })),
   );
 });
+
+// ── 고아 추출 상태 복구 ─────────────────────────────────────────────
+// 추출 도중 앱이 종료되면 status.json 이 {"state":"extracting"} 에 고착된다.
+// 시작 시 한 번 훑어, 실제로 진행 중이 아닌 문서를 "error" 로 바꿔
+// 라이브러리 우클릭 '다시 추출'로 복구할 수 있게 한다.
+async function sweepStaleExtracting(): Promise<void> {
+  const root = docsRoot();
+  let entries;
+  try {
+    entries = await fs.readdir(root, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    if (extractActive || extractQueue.some((j) => j.docId === e.name)) continue;
+    const file = path.join(root, e.name, "status.json");
+    const status = await readJson(file);
+    if (status?.state !== "extracting") continue;
+    try {
+      await fs.writeFile(file, JSON.stringify({ ...status, state: "error" }), "utf8");
+    } catch {
+      /* 개별 실패는 무시 — 다음 실행에서 다시 시도됨 */
+    }
+  }
+}
 
 // ── 문서 폴더 와처: 추출 진행/완료를 뷰어에 라이브 통지 ────────────────
 // document.json/status.json 변경 시 'docs:changed' 이벤트를 모든 창에 전송.
@@ -511,7 +546,7 @@ ipcMain.handle("ai:listModels", async (_e, provider: AIProvider, key: string) =>
 // ── PDF 추출: extract.py 를 자식 프로세스로 실행 — '직렬 큐'(동시 1개) ────────
 // 여러 PDF 를 한꺼번에 끌어다 놔도 한 번에 하나씩만 처리한다(메모리 폭주·먹통 방지).
 // 추출은 document.json/status.json 을 점진 기록 → 와처가 라이브러리를 자동 갱신.
-interface ExtractJob { pdfPath: string; py: string; scriptsDir: string; script: string }
+interface ExtractJob { pdfPath: string; py: string; scriptsDir: string; script: string; docId?: string }
 const extractQueue: ExtractJob[] = [];
 let extractActive = false;
 
@@ -539,6 +574,7 @@ function runNextExtract(): void {
   const useNice = process.platform !== "win32";
   const cmd = useNice ? "nice" : job.py;
   const args = useNice ? ["-n", "15", job.py, job.script, job.pdfPath] : [job.script, job.pdfPath];
+  if (job.docId) args.push("--doc-id", job.docId); // 재추출: 기존 문서 폴더 유지
   let child;
   try {
     child = spawn(cmd, args, { cwd: job.scriptsDir, stdio: "ignore", env });
@@ -581,6 +617,21 @@ ipcMain.handle("pipeline:extract", async (_e, pdfPath: string) => {
   extractQueue.push({ pdfPath, py, scriptsDir, script });
   runNextExtract();
   return { started: true, queued: position > 0, position };
+});
+
+// 재추출 — 문서 폴더의 source.pdf 로 같은 doc_id 에 다시 추출(주석·읽기상태는 state.json 이라 보존).
+ipcMain.handle("pipeline:reextract", async (_e, docId: string) => {
+  const src = path.join(docsRoot(), docId, "source.pdf");
+  if (!existsSync(src)) return { error: "원본 PDF(source.pdf)가 없어 재추출할 수 없습니다." };
+  const py = await resolvePython();
+  const scriptsDir = pipelineScriptsDir();
+  const script = path.join(scriptsDir, "extract.py");
+  if (!existsSync(py)) return { error: "추출 엔진이 설치되지 않았습니다." };
+  if (!existsSync(script)) return { error: `extract.py 없음: ${script}` };
+  if (extractQueue.some((j) => j.docId === docId)) return { started: true, queued: true };
+  extractQueue.push({ pdfPath: src, py, scriptsDir, script, docId });
+  runNextExtract();
+  return { started: true };
 });
 
 // ── 추출 엔진 상태 / 설정 (배포: 친구가 셋업 후 경로 확인·지정) ──────────
@@ -748,6 +799,7 @@ app.whenReady().then(async () => {
   await migrateLegacyDataDir(); // 구 PaperReader 폴더 → Galpi (최초 1회)
   registerDocProtocol();
   const win = createWindow();
+  await sweepStaleExtracting(); // 지난 실행에서 고착된 '추출 중' 문서 → error 로 복구 가능하게
   startDocsWatcher();
   // 실행할 때마다 업데이트 확인(패키징 빌드만; dev 제외). UI 가 먼저 뜨도록 잠시 뒤.
   if (!isDev) setTimeout(() => void checkUpdateOnLaunch(win), 2500);

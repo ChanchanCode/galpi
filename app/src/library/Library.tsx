@@ -38,10 +38,9 @@ interface Props {
   onToggleFinished: (d: DocSummary) => void;
   onRefresh: () => void;
   onOpenSettings: () => void;
-  dropProps: Record<string, unknown>;
 }
 
-export function Library({ docs, onOpen, onToggleFinished, onRefresh, onOpenSettings, dropProps }: Props) {
+export function Library({ docs, onOpen, onToggleFinished, onRefresh, onOpenSettings }: Props) {
   const [lib, setLib] = useState<LibMeta>({ folders: [], docs: {} });
   const [current, setCurrent] = useState<string | null>(null);
   const [selMode, setSelMode] = useState(false);
@@ -130,6 +129,20 @@ export function Library({ docs, onOpen, onToggleFinished, onRefresh, onOpenSetti
     if (moveTarget) moveKeysTo(moveTarget, dest);
     setMoveTarget(null);
     exitSel();
+  };
+
+  // 원본 PDF 로 같은 doc_id 에 다시 추출 — 형광펜·메모·읽기상태(state.json)는 그대로 유지.
+  const reextractKeys = async (keys: Set<string>) => {
+    const { docIds } = keysToIds(keys);
+    for (const id of docIds) {
+      const res = await window.paperAPI.reextractDoc(id);
+      if (res.error) {
+        window.alert(res.error);
+        break;
+      }
+    }
+    exitSel();
+    onRefresh();
   };
 
   const deleteKeys = async (keys: Set<string>) => {
@@ -237,7 +250,7 @@ export function Library({ docs, onOpen, onToggleFinished, onRefresh, onOpenSetti
   const empty = subfolders.length === 0 && folderDocs.length === 0;
 
   return (
-    <div className="library-root" {...dropProps}>
+    <div className="library-root">
       <header className="library-bar">
         <div className="library-brand">
           <GalpiMark size={34} />
@@ -352,7 +365,13 @@ export function Library({ docs, onOpen, onToggleFinished, onRefresh, onOpenSetti
                 <span className="doc-title">{docTitle(d)}</span>
                 {sub && <span className="doc-sub">{sub}</span>}
                 <span className="doc-foot">
-                  {d.state === "extracting" ? `추출 중 ${d.pages_done}/${d.page_count}p` : `${d.page_count}p`}
+                  {d.state === "extracting" ? (
+                    `추출 중 ${d.pages_done}/${d.page_count}p`
+                  ) : d.state === "error" ? (
+                    <span className="foot-error">추출 실패 — 우클릭 → 다시 추출</span>
+                  ) : (
+                    `${d.page_count}p`
+                  )}
                   {read && <span className="doc-dot">·</span>}
                   {read && <span>{read} 읽음</span>}
                 </span>
@@ -401,6 +420,9 @@ export function Library({ docs, onOpen, onToggleFinished, onRefresh, onOpenSetti
             <button className="ctx-item" onClick={() => { setMoveTarget(menu.keys); setMenu(null); }}>이동…</button>
             {menu.keys.size === 1 && (
               <button className="ctx-item" onClick={() => { startRename(menu.keys); setMenu(null); }}>이름 변경</button>
+            )}
+            {keysToIds(menu.keys).docIds.length > 0 && (
+              <button className="ctx-item" onClick={() => { const k = menu.keys; setMenu(null); void reextractKeys(k); }}>다시 추출</button>
             )}
             <div className="ctx-sep" />
             <button className="ctx-item danger" onClick={() => { const k = menu.keys; setMenu(null); void deleteKeys(k); }}>삭제</button>

@@ -1,5 +1,97 @@
 # 작업 로그
 
+[2026-07-04 20:56] 고아 "extracting" 상태 복구 + 0.1.12 릴리스
+
+한 일:
+- 추출 도중 앱 종료로 status.json 이 "extracting" 에 고착되는 문제 복구(직전 로그의
+  '다음 개선 후보'): main.ts sweepStaleExtracting() — 앱 시작 시(startDocsWatcher 직전)
+  docs 폴더를 훑어 추출 큐에 없는 "extracting" 문서를 "error" 로 전환(pages_done 등
+  기존 필드 보존). 라이브러리 카드 doc-foot 에 error 표시 "추출 실패 — 우클릭 → 다시
+  추출"(styles.css .foot-error, danger 색) → 기존 재추출로 복구 가능.
+- 0.1.12 릴리스: 커밋 안 됐던 기능 일괄 포함(제목/저자 추출 개선·주석 MD 내보내기·
+  수식 편집·⌘P·⌘O·재추출·섹션 표시·읽던 위치 복원·드래그드롭 플리커/주석 유실/메모
+  호버 수정·uninstall-mac.sh·BACKEND_HANDOFF.md).
+
+결정과 이유:
+- 스윕은 앱 시작 시 1회만: 추출 큐는 메모리 상주라 시작 시점엔 항상 비어 있음 —
+  그때 "extracting" 인 문서는 전부 고아가 확실. 만일을 위한 extractActive/큐 가드 포함.
+
+막힌 점 / 다음:
+- document.json 생성 전(첫 페이지 전) 죽은 문서는 error 로 바꿔도 라이브러리에 안 뜸
+  (docs:list 가 document.json 없는 폴더 스킵) → PDF 재드롭만 가능. 필요 시 후속.
+
+[2026-07-04 19:50] 제목/저자 추출 개선 + 기능 5종(주석 MD·수식 편집·⌘P·재추출·섹션 표시)
+
+한 일:
+- 제목/저자 추출 개선(paper_meta.py): PDF 메타데이터 쓰레기 값 거부(_usable_title —
+  워드프로세서명·.doc 파일명·PII/DOI·URL) + 1페이지 최대 글꼴 폴백(_title_from_page1,
+  단어 2개+·12자+·상단 60%·본문 크기 대비 1.15× 조건으로 저널 로고 오탐 차단) +
+  저자 계정명 거부(_plausible_authors) + 저자 수집 창 3→5줄(FAMA and FRENCH 잘림 해결).
+  오늘 받은 5편 전부 검증 통과. 기존 3편은 document.json 제자리 패치(와처가 라이브 갱신).
+  MacKinlay 는 스캔본(텍스트 레이어 없음) → 기존 build_document 첫 heading 폴백이 처리.
+- 주석 Markdown 내보내기(annotations/exportMd.ts + 패널 복사 버튼): 문서 순서 정렬
+  (Range.compareBoundaryPoints), 메모=인용+본문·형광펜=색/키워드 표기 → 클립보드.
+- 수식 LaTeX 인라인 수정(§11-10): SourcePeek 수식 블록이면 하단 편집 스트립
+  (textarea+KaTeX 라이브 프리뷰+저장/원래대로). state.json formula_edits 사이드카
+  (useAnnotations 확장) → 재추출에도 보존. App 렌더에서 latex 오버라이드.
+- ⌘P 퀵 스위처(nav/QuickSwitcher.tsx): 최근 읽은 순+타이핑 필터+↑↓/Enter.
+  library.json 이름변경 오버라이드 반영. 키맵 quickSwitch 등록.
+- 재추출: extract.py --doc-id(같은 폴더 갱신, source.pdf 자기복사 가드) +
+  main.ts pipeline:reextract(직렬 큐 공용) + 라이브러리 우클릭 "다시 추출".
+  주석·읽기상태는 state.json 이라 그대로 보존됨.
+- 현재 섹션 스티키 표시: SectionRail active 재사용, 본문 좌상단 muted 라벨(표시 전용).
+- 제거/업데이트 조사: 앱 삭제 시 ~5GB 잔존(pyenv 1.7G + HF 모델 3.2G + 데이터).
+  pipeline/uninstall-mac.sh 신규(문서 삭제는 별도 확인) + DISTRIBUTE.md §D.
+  업데이트 확인 검증: repo 공개·latest v0.1.11·dmg 에셋·다운로드 URL 모두 정상.
+- SourcePeek CropPopover 에 key={block.id} — 블록 연속 클릭 시 뷰/초안 스테일 수정.
+
+결정과 이유:
+- 제목 폴백을 MinerU heading 이 아니라 fitz 1페이지 파싱으로 한 이유: 메타는 추출
+  시작 즉시 필요(스트리밍 초기 기록). MinerU heading 폴백은 build_document 에 이미 있어
+  이중 안전망이 됨(스캔본 커버).
+- 재추출에 --doc-id 오버라이드가 필수인 이유: source.pdf 로 추출하면 파일명 stem 이
+  "source"라 doc_id 가 달라져 새 문서가 생겨버림.
+- 주의: 설치본(0.1.11) 번들 파이프라인은 구버전 — 이번 수정 전부 다음 릴리스에 실려야
+  앱 드롭 추출에 반영됨. (오늘 패치·백그라운드 추출은 dev 파이프라인으로 이미 적용)
+
+막힌 점 / 다음:
+- Fama 1992 는 dev 파이프라인으로 백그라운드 추출 중(메타 정상 확인, 완료는 수 분).
+- MacKinlay 첫 추출이 앱 종료로 chunk 도중 죽어 "extracting" 에 고착됐었음 —
+  다음 개선 후보: 앱 시작 시 고아 "extracting" 상태 감지 → error 로 전환(재추출 유도).
+
+[2026-07-04 19:04] 드래그-드롭 플리커 수정 + 주석 유실 수정 + 읽던 위치 복원/⌘O
+
+한 일:
+- PDF 드래그 오버레이 플리커 수정(App.tsx): 요소별 React onDragOver/onDragLeave + 오버레이
+  마운트 방식이 원인 — 오버레이가 뜨는 순간 원래 요소에 dragleave 가 튀어
+  숨김↔표시 무한 반복, 그 틈에 drop 도 씹힘. window 레벨 dragenter/dragleave
+  깊이 카운터로 교체, 오버레이는 pointer-events:none. dropProps 프롭 제거(Library 포함).
+- 주석 유실 버그 수정(useAnnotations.ts): 형광펜/메모 생성 후 300ms 디바운스 안에
+  문서를 나가면 loadedFor/refs 가 먼저 리셋돼 예약된 저장이 스킵 → flushPersist()
+  추가(문서 전환 effect 첫 줄 + 언마운트에서 즉시 커밋).
+- 메모 호버 영구 먹통 수정(NotesLayer.tsx): effect cleanup 이 RAF 취소 후
+  hoverRaf.current 를 null 로 안 돌려 다음 effect 의 스로틀이 영구 차단되던 것.
+- 읽던 위치 기억/복원 신규(nav/useScrollMemory.ts): 화면 최상단 블록 id + 블록 내
+  진행률을 state.json scroll_anchor 로 저장(600ms 디바운스, 나갈 때 flush), 문서
+  다시 열면 그 문장 근처로 복원. 절대 px 이 아니라 타이포 변경(reflow)에도 견딤.
+  state.json 은 docs 와처(document.json|status.json 필터) 밖이라 재로드 유발 없음.
+- ⌘O PDF 열기 신규: main.ts pdf:pick(showOpenDialog, multiSelections) + preload
+  pickPdfs + 키맵 openPdf 등록(기본 Mod+O, 단축키 패널에 자동 노출·재바인딩 가능).
+  추출 루프는 extractPaths() 로 공용화(드롭·⌘O 동일 경로).
+
+결정과 이유:
+- 드롭 감지를 window 레벨로 올린 이유: 오버레이 마운트가 이벤트 대상을 바꾸는 한
+  요소 단위 감지는 구조적으로 플리커 → 전역 카운터 + 무간섭 오버레이가 유일한 안정 해법.
+  내부 카드 드래그는 types 의 application/x-galpi-move 로 계속 구분.
+- 스크롤 앵커를 블록 기반으로 한 이유: scrollTop/ratio 는 글자크기·폰트 변경 시 어긋남.
+  data-block-id 가 전 블록에 이미 붙어 있어 공짜로 정밀 복원 가능.
+- 탐색 에이전트가 지목한 FootnoteRef 리스너 누수·translateStream 레이스는 코드 확인
+  결과 오탐(둘 다 cleanup/id 필터 있음) — 수정 안 함.
+
+막힌 점 / 다음:
+- 이미지(figure) 로드로 앵커 위 레이아웃이 늦게 변하면 복원 위치가 약간 밀릴 수 있음
+  (블록 앵커라 크게 어긋나진 않음). 문제 되면 이미지 로드 후 1회 재보정 고려.
+
 [2026-06-27 18:30] 배포 — macOS .dmg + 친구 셋업 + 수동 업데이트 (Phase 6)
 
 한 일:

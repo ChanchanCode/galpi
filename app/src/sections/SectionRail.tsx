@@ -129,8 +129,15 @@ export function SectionRail({ docId, blockCount, panelOpen, onClose }: Props) {
   const hasSecs = secs.length >= 2;
   if (!hasSecs && !panelOpen) return null;
 
+  const activeLabel = secs.find((s) => s.id === active)?.label ?? null;
+
   return (
     <>
+      {/* 현재 섹션 표시 — 스크롤이 내려가 제목이 안 보일 때 위치 감각용(표시 전용) */}
+      {hasSecs && activeLabel && progress > 0.01 && (
+        <div className="section-sticky" aria-hidden="true">{activeLabel}</div>
+      )}
+
       {/* 스크롤 옆 위치 눈금 — 항상 고정 표시(시각 표시 전용) */}
       {hasSecs && (
         <div className="section-minimap" aria-hidden="true">
