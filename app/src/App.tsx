@@ -469,6 +469,17 @@ export function App() {
               panelOpen={sectionPanel}
               onClose={() => setSectionPanel(false)}
             />
+            {annPanel && (
+              <AnnotationsPanel
+                highlights={ann.highlights}
+                notes={ann.notes}
+                counts={hlCounts}
+                updateHighlights={ann.updateHighlights}
+                updateNotes={ann.updateNotes}
+                onCopyMd={copyAnnotationsMd}
+                onClose={() => setAnnPanel(false)}
+              />
+            )}
           </div>
           <FindBar docId={doc.doc_id} blockCount={doc.blocks.length} />
           <SelectionTranslate containerSel=".reader-content" />
@@ -481,17 +492,6 @@ export function App() {
           />
           <HighlightLayer doc={doc} rules={ann.highlights} updateRules={ann.updateHighlights} onCounts={setHlCounts} />
           <NotesLayer doc={doc} notes={ann.notes} updateNotes={ann.updateNotes} />
-          {annPanel && (
-            <AnnotationsPanel
-              highlights={ann.highlights}
-              notes={ann.notes}
-              counts={hlCounts}
-              updateHighlights={ann.updateHighlights}
-              updateNotes={ann.updateNotes}
-              onCopyMd={copyAnnotationsMd}
-              onClose={() => setAnnPanel(false)}
-            />
-          )}
           <FocusMode mode={focusMode} docId={doc.doc_id} blockCount={doc.blocks.length} />
           <JumpBackButton />
         </div>

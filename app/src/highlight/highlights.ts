@@ -223,7 +223,10 @@ export function occurrenceOf(container: HTMLElement, text: string, selRange: Ran
   let n = 0;
   for (const r of ranges) {
     // r 의 끝이 선택 시작보다 앞이면 앞선 출현.
-    if (r.compareBoundaryPoints(Range.END_TO_START, selRange) <= 0) n++;
+    // compareBoundaryPoints 의 how 는 (source, this) 순서 명명 — START_TO_END 가
+    // "this(r)의 끝 ↔ source(selRange)의 시작" 비교다. END_TO_START 를 쓰면
+    // "r의 시작 ↔ 선택의 끝"이 되어 선택 자신까지 세는 오프바이원(다음 출현이 칠해짐).
+    if (r.compareBoundaryPoints(Range.START_TO_END, selRange) <= 0) n++;
   }
   return n;
 }

@@ -46,14 +46,14 @@ export function HighlightLayer({ doc, rules, updateRules, onCounts }: Props) {
   const keymap = useStore((s) => s.keymap);
   const [status, setStatus] = useState<string | null>(null);
   const statusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // 누름 추적: 같은 키 keydown→keyup 구간으로 탭/홀드 판별
+  // 누름 추적: keydown 시작 시각으로 홀드(키 반복) 판별. 탭은 keydown 에서 바로 처리.
   const press = useRef<{
     key: string;
     scope: HlScope;
     text: string;
     occurrence: number;
-    held: boolean;
-    timer: ReturnType<typeof setTimeout>;
+    startedAt: number;
+    removed: boolean;
   } | null>(null);
 
   // 문서 닫힐 때 우리 하이라이트 정리
@@ -184,20 +184,36 @@ export function HighlightLayer({ doc, rules, updateRules, onCounts }: Props) {
     [updateRules, findRule, flashStatus, setDim],
   );
 
-  // ── 키보드: 탭/홀드 판별 ─────────────────────────────────────────
-  // keydown 에 바인딩이 정확히 일치하면 누름 시작, 같은 물리 키의 keyup 으로 종료.
-  // (기본 H. 수식 조합으로 바꿔도 동작 — keyup 은 글자 키 release 로 판정.)
+  // ── 키보드: 탭(즉시 색 순환) / 홀드(키 반복 = 제거) ─────────────────
+  // 예전엔 keyup 타이밍으로 탭/홀드를 갈랐는데, 조합키(⇧H)를 누른 채로는 문자 키의
+  // keyup 이 유실되는 경우가 있어(macOS/Chromium) 탭이 '제거'로 오판돼 ⇧H 가 먹지
+  // 않았다. 이제 탭은 keydown 에서 바로 적용하고, 홀드 제거는 OS 키 반복(e.repeat)이
+  // HOLD_MS 를 넘겼을 때만 한다 — keyup 에 의존하지 않아 조합키에서도 안정적.
   useEffect(() => {
-    const onDown = (e: KeyboardEvent) => {
-      if (isEditableTarget(e.target)) return;
-      if (e.repeat) return;
-      // 어떤 형광펜인지 — 키워드(전부) vs 선택-부분(이 부분만). 수식 키가 달라 충돌 없음.
-      const scope: HlScope | null = matchCombo(e, keymap.highlight)
+    const scopeOf = (e: KeyboardEvent): HlScope | null =>
+      matchCombo(e, keymap.highlight) // 키워드(전부) vs 선택-부분(이 부분만)
         ? "keyword"
         : matchCombo(e, keymap.highlightPassage)
           ? "passage"
           : null;
+
+    const onDown = (e: KeyboardEvent) => {
+      if (isEditableTarget(e.target)) return;
+      const scope = scopeOf(e);
       if (!scope) return;
+      const key = baseKey(e) ?? "";
+
+      // 키 반복(꾹 누름) → HOLD_MS 지나면 해당 규칙 제거(1회).
+      if (e.repeat) {
+        const p = press.current;
+        if (p && p.key === key && p.scope === scope && !p.removed && Date.now() - p.startedAt >= HOLD_MS) {
+          p.removed = true;
+          removeMatch(scope, p.text, p.occurrence);
+        }
+        e.preventDefault();
+        return;
+      }
+
       const sel = readSelection();
       if (!sel) return; // 선택 없으면 통과(다른 입력 방해 안 함)
       e.preventDefault();
@@ -207,29 +223,21 @@ export function HighlightLayer({ doc, rules, updateRules, onCounts }: Props) {
         const container = document.querySelector(CONTAINER_SEL) as HTMLElement | null;
         if (container) occurrence = occurrenceOf(container, sel.text, sel.range);
       }
-      if (press.current) clearTimeout(press.current.timer);
-      const timer = setTimeout(() => {
-        if (press.current) {
-          press.current.held = true;
-          removeMatch(press.current.scope, press.current.text, press.current.occurrence);
-        }
-      }, HOLD_MS);
-      press.current = { key: baseKey(e) ?? "", scope, text: sel.text, occurrence, held: false, timer };
-    };
-    const onUp = (e: KeyboardEvent) => {
-      const p = press.current;
-      if (!p || baseKey(e) !== p.key) return;
-      clearTimeout(p.timer);
-      if (!p.held) cycle(p.scope, p.text, p.occurrence); // 탭
-      press.current = null;
+      cycle(scope, sel.text, occurrence); // 탭: 즉시 색 순환(생성/순환/해제)
+      press.current = { key, scope, text: sel.text, occurrence, startedAt: Date.now(), removed: false };
       // 선택은 유지 → 연속 탭으로 색 순환 가능
     };
+
+    const onUp = (e: KeyboardEvent) => {
+      const p = press.current;
+      if (p && baseKey(e) === p.key) press.current = null;
+    };
+
     document.addEventListener("keydown", onDown);
     document.addEventListener("keyup", onUp);
     return () => {
       document.removeEventListener("keydown", onDown);
       document.removeEventListener("keyup", onUp);
-      if (press.current) clearTimeout(press.current.timer);
       press.current = null;
     };
   }, [keymap.highlight, keymap.highlightPassage, readSelection, cycle, removeMatch]);

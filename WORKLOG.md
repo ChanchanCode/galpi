@@ -1,5 +1,24 @@
 # 작업 로그
 
+[2026-07-04 21:50] 형광펜 버그 수정(오프바이원·⇧H·패널 가림) + 0.1.13 릴리스
+
+한 일:
+- 형광펜 오프바이원 수정(highlights.ts occurrenceOf): compareBoundaryPoints 의 how 인자
+  이름이 (source, this) 순서라 END_TO_START 는 "매치 시작 ↔ 선택 끝" 비교가 돼 선택
+  자신까지 세어 다음 출현이 칠해졌음. START_TO_END("매치 끝 ↔ 선택 시작")로 교정.
+  Electron Range 로 검증(2번째 foo 선택 → 기존 2, 수정 1).
+- ⇧H(키워드 형광펜) 안 먹던 문제(HighlightLayer): 탭/홀드를 keyup 타이밍으로 갈랐는데
+  수식 키를 누른 채로는 문자 키 keyup 이 유실돼(macOS/Chromium) 탭이 '제거'로 오판됨.
+  → 탭은 keydown 에서 즉시 적용, 홀드 제거는 OS 키 반복(e.repeat)+HOLD_MS 로만 판정.
+  keyup 의존 제거. (H 단독→키워드 오작동은 Shift 잔류로 인한 것 — 코드 버그 아님.)
+- 주석 패널 복사 버튼 가림 수정(App.tsx): 패널이 reader-root 기준 top:0(z:40)라 sticky
+  상단바(z:45)가 머리줄(복사·닫기)을 덮었음. 패널을 reader-body 안으로 이동 → 상단바
+  아래부터 시작.
+
+막힌 점 / 다음:
+- 홀드 제거 시 탭(색 순환)이 먼저 적용됐다가 반복 신호로 제거되어 짧은 색 깜빡임 있음
+  (기능상 정상). 거슬리면 keydown-탭을 지연 적용하는 방안 검토 가능.
+
 [2026-07-04 20:56] 고아 "extracting" 상태 복구 + 0.1.12 릴리스
 
 한 일:
