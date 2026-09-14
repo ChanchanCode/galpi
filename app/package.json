@@ -1,6 +1,6 @@
 {
   "name": "paper-reflow-reader",
-  "version": "0.1.13",
+  "version": "0.2.0",
   "description": "논문 가독성 리플로우 뷰어 (Electron + React)",
   "main": "dist-electron/main.cjs",
   "type": "module",
@@ -12,11 +12,13 @@
     "start": "electron .",
     "package": "npm run build && electron-builder",
     "package:mac": "npm run build && electron-builder --mac",
-    "package:win": "npm run build && electron-builder --win"
+    "package:win": "npm run build && electron-builder --win",
+    "test": "node .p2build.mjs && node --test test/"
   },
   "dependencies": {
     "dompurify": "^3.2.4",
     "katex": "^0.16.11",
+    "marked": "^18.0.13",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "zustand": "^5.0.2"
@@ -61,6 +63,10 @@
       "target": [
         {
           "target": "dmg",
+          "arch": "arm64"
+        },
+        {
+          "target": "zip",
           "arch": "arm64"
         }
       ],

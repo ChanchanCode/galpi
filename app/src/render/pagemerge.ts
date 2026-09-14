@@ -12,9 +12,15 @@ const STARTS_CONT = /^\s*["'(“]?[a-z0-9]/; // 이어지는 조각: 소문자/�
 export interface PageMerge {
   absorbed: Set<string>; // 합쳐져 숨길 블록 id
   textOverride: Map<string, string>; // 기준 블록 id → 합쳐진 본문
+  // 흡수된 조각 id → 그 문단을 시작한 블록 id. 보기 B 의 '⤶ 앞 쪽에서 이어짐' 칩이 쓴다(§5.1).
+  baseOf: Map<string, string>;
 }
 
-export const EMPTY_PAGE_MERGE: PageMerge = { absorbed: new Set(), textOverride: new Map() };
+export const EMPTY_PAGE_MERGE: PageMerge = {
+  absorbed: new Set(),
+  textOverride: new Map(),
+  baseOf: new Map(),
+};
 
 function joinPage(a: string, b: string): string {
   const aa = a.replace(/\s+$/, "");
@@ -26,6 +32,7 @@ function joinPage(a: string, b: string): string {
 export function buildPageMerges(blocks: Block[], hidden: Set<string>): PageMerge {
   const absorbed = new Set<string>();
   const textOverride = new Map<string, string>();
+  const baseOf = new Map<string, string>();
   let baseId: string | null = null;
   let basePage: number | null = null;
   let baseText = "";
@@ -43,6 +50,7 @@ export function buildPageMerges(blocks: Block[], hidden: Set<string>): PageMerge
       baseText = joinPage(baseText, text);
       textOverride.set(baseId, baseText);
       absorbed.add(b.id);
+      baseOf.set(b.id, baseId);
       basePage = b.page; // 3페이지 연속 분리도 계속 이어붙이기
       continue;
     }
@@ -50,5 +58,5 @@ export function buildPageMerges(blocks: Block[], hidden: Set<string>): PageMerge
     basePage = b.page;
     baseText = text;
   }
-  return { absorbed, textOverride };
+  return { absorbed, textOverride, baseOf };
 }

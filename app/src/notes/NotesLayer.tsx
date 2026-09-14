@@ -6,6 +6,7 @@ import type { PaperDocument } from "../types";
 import { useStore } from "../store/useStore";
 import { isEditableTarget, matchCombo } from "../keys/keymap";
 import { normalizeText } from "../highlight/highlights";
+import { onAction } from "../selection/quote";
 import { clearNoteMarks, newNoteId, noteRanges, paintNoteMarks, type Note } from "./notes";
 
 const CONTAINER_SEL = ".reader-content";
@@ -130,7 +131,20 @@ export function NotesLayer({ doc, notes, updateNotes }: Props) {
     return { quote, anchor: normalizeText(quote), x: rect.left + rect.width / 2, y: rect.bottom };
   }, []);
 
-  // 단축키(기본 M): 선택 위에 메모 작성 팝오버. 이미 메모가 있는 구절이면 그 메모를 편집.
+  // 현재 선택에 메모 팝오버. 이미 메모가 있는 구절이면 그 메모를 편집. 선택이 본문 밖이면 false.
+  const openForSelection = useCallback((): boolean => {
+    const sel = readSelection();
+    if (!sel) return false;
+    const existing = notes.find((n) => n.anchor === sel.anchor);
+    setEditing(
+      existing
+        ? { id: existing.id, quote: existing.quote, anchor: existing.anchor, body: existing.body, x: sel.x, y: sel.y }
+        : { id: null, quote: sel.quote, anchor: sel.anchor, body: "", x: sel.x, y: sel.y },
+    );
+    return true;
+  }, [readSelection, notes]);
+
+  // 단축키(기본 M)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -140,19 +154,14 @@ export function NotesLayer({ doc, notes, updateNotes }: Props) {
       if (isEditableTarget(e.target)) return;
       if (e.repeat) return;
       if (!matchCombo(e, noteCombo)) return;
-      const sel = readSelection();
-      if (!sel) return;
-      e.preventDefault();
-      const existing = notes.find((n) => n.anchor === sel.anchor);
-      setEditing(
-        existing
-          ? { id: existing.id, quote: existing.quote, anchor: existing.anchor, body: existing.body, x: sel.x, y: sel.y }
-          : { id: null, quote: sel.quote, anchor: sel.anchor, body: "", x: sel.x, y: sel.y },
-      );
+      if (openForSelection()) e.preventDefault();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [noteCombo, readSelection, notes]);
+  }, [noteCombo, openForSelection]);
+
+  // 선택 툴바(galpi:action "note") — 키 입력과 같은 경로
+  useEffect(() => onAction((a) => void (a.id === "note" && openForSelection())), [openForSelection]);
 
   // 팝오버 열릴 때 textarea 포커스 + 커서 끝으로
   useEffect(() => {

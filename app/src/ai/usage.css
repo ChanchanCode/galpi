@@ -1,0 +1,50 @@
+/* AI 설정 탭 — 계정·한도·사용량·자동. 테마 변수만 쓴다(light/sepia/dark). */
+
+/* 행 안 텍스트 입력은 옆 버튼과 한 줄에 — 전역 규칙의 width:100% 가 버튼을 다음 줄로 밀어낸다. */
+.ai-settings .ai-row input[type="text"] { flex: 1 1 140px; min-width: 0; width: auto; }
+.ai-settings .ai-row input.ai-bad { border-color: #d2674a; }
+
+/* 라벨 줄 오른쪽의 상태 단어·작은 아이콘 */
+.ai-settings .ctrl-label { align-items: center; min-height: 22px; }
+.ai-head-right { display: inline-flex; align-items: center; gap: 6px; }
+.ai-warn { font-style: normal; font-size: 0.76rem; color: #d2674a; }
+.ai-mini-btn {
+  width: 22px; height: 22px; padding: 0; display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 1px solid transparent; border-radius: 6px; color: var(--muted); cursor: pointer;
+}
+.ai-mini-btn:hover:not(:disabled) { color: var(--accent); border-color: var(--rule); }
+.ai-mini-btn:disabled { cursor: default; }
+.ai-mini-btn svg { width: 14px; height: 14px; }
+
+/* 32px 정사각 아이콘 버튼(행 높이와 맞춤) */
+.ai-row .seg-btn.ai-icon-btn { width: 32px; padding: 0; display: inline-flex; align-items: center; justify-content: center; color: var(--muted); }
+.ai-row .seg-btn.ai-icon-btn:hover:not(:disabled) { color: var(--accent); }
+.ai-row .seg-btn.ai-toggle { min-width: 88px; }
+
+.ai-spin { animation: ai-spin 0.9s linear infinite; }
+@keyframes ai-spin { to { transform: rotate(360deg); } }
+
+/* 한도 바 */
+.q-bars { display: flex; flex-direction: column; gap: 6px; transition: opacity 0.15s; }
+.q-bars.dim { opacity: 0.5; }
+.q-row { display: grid; grid-template-columns: 3.2em 1fr 3em; align-items: center; gap: 10px; font-size: 0.8rem; }
+.q-label { color: var(--muted); }
+.q-track {
+  position: relative; height: 6px; border-radius: 999px; overflow: hidden;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.q-track > i { position: absolute; inset: 0 auto 0 0; border-radius: inherit; background: var(--accent); transition: width 0.3s ease; }
+.q-pct { font-weight: 500; text-align: right; font-variant-numeric: tabular-nums; }
+.q-row.low .q-track > i { background: #d2674a; }
+.q-row.low .q-pct { color: #d2674a; }
+
+/* 사용량 — 라벨 · 토큰 · 호출 수. 기능별 줄은 한 톤 낮춘다. */
+.u-grid { display: grid; grid-template-columns: 3.2em 5em auto; column-gap: 10px; row-gap: 4px; font-size: 0.82rem; font-variant-numeric: tabular-nums; }
+.u-row { display: contents; }
+.u-label { color: var(--muted); }
+.u-tok { text-align: right; font-weight: 500; }
+.u-calls { color: var(--muted); }
+.u-grid.sub { font-size: 0.76rem; padding-top: 8px; border-top: 1px dashed color-mix(in srgb, var(--fg) 12%, transparent); }
+.u-grid.sub .u-tok { font-weight: 400; color: var(--fg); }
+
+.ai-diag { justify-content: space-between; }

@@ -5,8 +5,19 @@ import { createContext, Fragment, type ReactNode } from "react";
 export interface ReadingOpts {
   bionic: boolean;
   sentenceBreak: boolean;
+  /** 선택한 글자를 **우클릭**으로 번역. 기본 꺼짐 — 우클릭이 번역에 잡히면
+   *  번역 카드 우클릭 메뉴나 시스템 메뉴와 부딪힌다. 선택 번역은 T 키로 계속 된다. */
+  contextTranslate: boolean;
+  /** 마우스로 글자를 고르면 선택 위에 미니 툴바(설명·형광펜·번역·메모·인용·AI 질문). 기본 켜짐.
+   *  예전 "본문 위 hover UI 금지"를 이 기능에 한해 사용자가 뒤집었다 — 그래서 끌 수 있어야 한다. */
+  selToolbar: boolean;
 }
-export const ReadingContext = createContext<ReadingOpts>({ bionic: false, sentenceBreak: false });
+export const ReadingContext = createContext<ReadingOpts>({
+  bionic: false,
+  sentenceBreak: false,
+  contextTranslate: false,
+  selToolbar: true,
+});
 
 // ── Bionic: 단어 앞부분 굵게 ──────────────────────────────────────
 function boldLen(len: number): number {
@@ -80,7 +91,12 @@ export function splitSentences(text: string): string[] {
 }
 
 // 평문 조각에 읽기 보조 적용(문장 줄바꿈 → 각 문장 내부 Bionic).
-export function renderReading(text: string, opts: ReadingOpts, keyBase: string): ReactNode[] {
+// 렌더에 실제로 필요한 축만 받는다 — 우클릭 번역 같은 다른 설정이 늘어도 여기가 안 깨진다.
+export function renderReading(
+  text: string,
+  opts: Pick<ReadingOpts, "bionic" | "sentenceBreak">,
+  keyBase: string,
+): ReactNode[] {
   if (!opts.bionic && !opts.sentenceBreak) return [text];
   if (!opts.sentenceBreak) return bionicNodes(text, keyBase);
 

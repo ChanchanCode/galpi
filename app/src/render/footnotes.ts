@@ -4,7 +4,6 @@
 // ※ MinerU 가 각주를 footnote 가 아니라 list/paragraph 로 오분류하는 경우가 많고(특히 긴 각주),
 //   한 블록에 여러 각주(<sup>1</sup>… <sup>2</sup>…)가 붙어 있기도 하다 → 블록 타입과 무관하게
 //   '선두 <sup>라벨</sup>' 신호로 잡고, 한 블록 안 여러 마커를 각각의 각주로 쪼갠다.
-import { createContext } from "react";
 import type { Block } from "../types";
 
 export interface Footnote {
@@ -98,6 +97,3 @@ export function buildFootnotes(blocks: Block[]): FootnoteData {
   });
   return { byLabel, pulled, ordered };
 }
-
-// 본문 RichText 가 참조 마커를 클릭형으로 바꿀 수 있도록 맵을 컨텍스트로 제공.
-export const FootnoteContext = createContext<Map<string, Footnote>>(new Map());

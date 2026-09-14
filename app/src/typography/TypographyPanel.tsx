@@ -25,27 +25,29 @@ function Control(props: {
   step: number;
   suffix?: string;
   display?: (v: number) => string;
+  disabled?: boolean;
   onChange: (v: number) => void;
 }) {
-  const { value, min, max, step } = props;
+  const { value, min, max, step, disabled } = props;
   const set = (v: number) => props.onChange(Math.min(max, Math.max(min, snap(v, step))));
   return (
-    <div className="set-ctrl">
+    <div className={`set-ctrl ${disabled ? "off" : ""}`}>
       <div className="set-ctrl-top">
         <span>{props.label}</span>
         <em>{props.display ? props.display(value) : value}{props.suffix}</em>
       </div>
       <div className="set-ctrl-row">
-        <button className="step-btn" onClick={() => set(value - step)} disabled={value <= min} aria-label="줄이기">−</button>
+        <button className="step-btn" onClick={() => set(value - step)} disabled={disabled || value <= min} aria-label="줄이기">−</button>
         <input
           type="range"
           min={min}
           max={max}
           step={step}
           value={value}
+          disabled={disabled}
           onChange={(e) => props.onChange(parseFloat(e.target.value))}
         />
-        <button className="step-btn" onClick={() => set(value + step)} disabled={value >= max} aria-label="늘리기">＋</button>
+        <button className="step-btn" onClick={() => set(value + step)} disabled={disabled || value >= max} aria-label="늘리기">＋</button>
       </div>
     </div>
   );
@@ -61,14 +63,35 @@ interface MetricDef {
   display?: (v: number) => string;
 }
 
+// 원문 축. **공유축(본문 폭)은 여기 없다** — 아래 공유 구역으로 뺐다(D15: 둘 다에 적용됨을 눈에 보이게).
 const METRICS: MetricDef[] = [
   { key: "fontSize", label: "글자 크기", min: 14, max: 24, step: 1, suffix: "px" },
   { key: "lineHeight", label: "줄간격", min: 1.3, max: 2.4, step: 0.05, display: (v) => v.toFixed(2) },
   { key: "paragraphSpacing", label: "문단 간격", min: 0.4, max: 2.0, step: 0.1, suffix: "em", display: (v) => v.toFixed(1) },
-  { key: "contentMaxWidth", label: "본문 폭", min: 560, max: 960, step: 20, suffix: "px" },
   { key: "letterSpacing", label: "자간", min: -0.02, max: 0.08, step: 0.005, suffix: "em", display: (v) => v.toFixed(3) },
   { key: "mathScale", label: "수식 크기", min: 0.9, max: 1.3, step: 0.05, display: (v) => v.toFixed(2) + "×" },
 ];
+
+// 번역 축은 **보기별로 따로**다(D15). 정리 모드는 원문 옆에, 원본 모드는 지면 옆에 서므로
+// 같은 값이 두 자리에서 다 맞을 수가 없다. 자간·글꼴만 두 보기 공통.
+const TR_REFLOW_METRICS: MetricDef[] = [
+  { key: "trReflowFontSize", label: "글자 크기", min: 8, max: 28, step: 1, suffix: "px" },
+  { key: "trReflowLineHeight", label: "줄간격", min: 1.3, max: 2.6, step: 0.05, display: (v) => v.toFixed(2) },
+];
+const TR_SOURCE_METRICS: MetricDef[] = [
+  { key: "trFontSize", label: "글자 크기", min: 8, max: 22, step: 1, suffix: "px" },
+  { key: "trLineHeight", label: "줄간격", min: 1.3, max: 2.6, step: 0.05, display: (v) => v.toFixed(2) },
+];
+const TR_SHARED_METRICS: MetricDef[] = [
+  { key: "trLetterSpacing", label: "자간", min: -0.04, max: 0.1, step: 0.005, suffix: "em", display: (v) => v.toFixed(3) },
+];
+
+// 공유축 — 지면 전체의 성질이라 원문/번역을 가르지 않는다.
+const SHARED_METRICS: MetricDef[] = [
+  { key: "contentMaxWidth", label: "본문 폭", min: 560, max: 960, step: 20, suffix: "px" },
+];
+
+type TypoTarget = "src" | "tr";
 
 export function TypographyPanel({
   onClose,
@@ -90,6 +113,7 @@ export function TypographyPanel({
   const apply = (patch: Partial<Typography>) => set(patch);
 
   const [tab, setTab] = useState<"read" | "ai">("read");
+  const [target, setTarget] = useState<TypoTarget>("src");
   const [presetName, setPresetName] = useState("");
   const [importText, setImportText] = useState("");
   const [importErr, setImportErr] = useState(false);
@@ -104,12 +128,14 @@ export function TypographyPanel({
     window.paperAPI.appVersion().then(setVersion);
     refreshPipe();
   }, []);
+  // 확인과 적용을 한 번에 — 새 버전이면 받아서 교체 준비 후 재시작/나중에(종료 시 적용)를 묻는다.
   const onCheckUpdate = async () => {
     setUpd({ msg: "확인 중…" });
-    const r = await window.paperAPI.checkUpdate();
-    if (r.error) setUpd({ msg: `확인 실패: ${r.error}` });
-    else if (r.hasUpdate) setUpd({ msg: `새 버전 v${r.latest} 가 있습니다.`, url: r.url });
-    else setUpd({ msg: `최신 버전입니다 (v${r.current}).` });
+    const r = await window.paperAPI.installUpdate();
+    if (r.state === "error") setUpd({ msg: r.latest ? `v${r.latest} 받기 실패` : "확인 실패" });
+    else if (r.state === "latest") setUpd({ msg: "최신" });
+    else if (r.state === "ready") setUpd({ msg: `v${r.latest} 종료 시 적용` });
+    else setUpd({ msg: `v${r.latest}` });
   };
   const onPickPython = async () => {
     const r = await window.paperAPI.pickPython();
@@ -239,6 +265,26 @@ export function TypographyPanel({
                 {fontChoices.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
               </select>
             </label>
+            {/* 글꼴만 연동이 기본이다 — CSS 폰트 스택이 라틴/한글을 각각 맡으므로 한 컨트롤로 충분하다. */}
+            <label className="ctrl">
+              <span className="ctrl-label">
+                번역 글꼴
+                <button
+                  className="link-lock"
+                  aria-pressed={t.trFontLinked}
+                  onClick={() => apply({ trFontLinked: !t.trFontLinked })}
+                >
+                  {t.trFontLinked ? "연동" : "개별"}
+                </button>
+              </span>
+              <select
+                value={t.trFontLinked ? t.fontFamily : t.trFontFamily}
+                disabled={t.trFontLinked}
+                onChange={(e) => apply({ trFontFamily: e.target.value })}
+              >
+                {fontChoices.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+              </select>
+            </label>
           </div>
           <div className="font-row">
             <div className="font-preview" style={{ fontFamily: t.fontFamily }}>
@@ -248,10 +294,110 @@ export function TypographyPanel({
           </div>
         </div>
 
-        {/* 본문 — 슬라이더 + 증감 버튼 */}
+        {/* 원문 | 번역 — 값은 분리, 글꼴만 연동 (§7.5 D15) */}
+        <div className="typo-section">
+          <div className="seg">
+            {(["src", "tr"] as TypoTarget[]).map((k) => (
+              <button
+                key={k}
+                className={`seg-btn ${target === k ? "on" : ""}`}
+                onClick={() => setTarget(k)}
+              >
+                {k === "src" ? "원문" : "번역"}
+              </button>
+            ))}
+          </div>
+          {target === "src" ? (
+            <div className="set-grid">
+              {METRICS.map((m) => (
+                <Control
+                  key={m.key}
+                  label={m.label}
+                  value={t[m.key] as number}
+                  min={m.min}
+                  max={m.max}
+                  step={m.step}
+                  suffix={m.suffix}
+                  display={m.display}
+                  onChange={(v) => apply({ [m.key]: v } as Partial<Typography>)}
+                />
+              ))}
+            </div>
+          ) : (
+            <>
+              <div className="set-group">
+                <span>정리 모드</span>
+                {/* 기본은 원문 연동 — 영문 18px 옆 한글 14px 은 밸런스가 깨지고,
+                    문서마다 손으로 맞출 수는 없다. 풀면 정리 모드만 따로 간다. */}
+                <button
+                  className="link-lock"
+                  aria-pressed={t.trReflowLinked}
+                  onClick={() => apply({ trReflowLinked: !t.trReflowLinked })}
+                >
+                  {t.trReflowLinked ? "원문 연동" : "개별"}
+                </button>
+              </div>
+              <div className="set-grid">
+                {TR_REFLOW_METRICS.map((m) => (
+                  <Control
+                    key={m.key}
+                    label={m.label}
+                    value={
+                      t.trReflowLinked
+                        ? m.key === "trReflowFontSize"
+                          ? t.fontSize
+                          : t.lineHeight
+                        : (t[m.key] as number)
+                    }
+                    min={m.min}
+                    max={m.max}
+                    step={m.step}
+                    suffix={m.suffix}
+                    display={m.display}
+                    disabled={t.trReflowLinked}
+                    onChange={(v) => apply({ [m.key]: v } as Partial<Typography>)}
+                  />
+                ))}
+              </div>
+              <div className="set-group"><span>원본 모드</span></div>
+              <div className="set-grid">
+                {TR_SOURCE_METRICS.map((m) => (
+                  <Control
+                    key={m.key}
+                    label={m.label}
+                    value={t[m.key] as number}
+                    min={m.min}
+                    max={m.max}
+                    step={m.step}
+                    suffix={m.suffix}
+                    display={m.display}
+                    onChange={(v) => apply({ [m.key]: v } as Partial<Typography>)}
+                  />
+                ))}
+              </div>
+              <div className="set-grid">
+                {TR_SHARED_METRICS.map((m) => (
+                  <Control
+                    key={m.key}
+                    label={m.label}
+                    value={t[m.key] as number}
+                    min={m.min}
+                    max={m.max}
+                    step={m.step}
+                    suffix={m.suffix}
+                    display={m.display}
+                    onChange={(v) => apply({ [m.key]: v } as Partial<Typography>)}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* 공유 — 원문·번역 양쪽에 적용 */}
         <div className="typo-section">
           <div className="set-grid">
-            {METRICS.map((m) => (
+            {SHARED_METRICS.map((m) => (
               <Control
                 key={m.key}
                 label={m.label}
@@ -317,7 +463,7 @@ export function TypographyPanel({
 
         {/* 읽기 보조 */}
         <div className="typo-section">
-          <span className="ctrl-label">읽기 보조 <span className="muted-inline">(단축키 B · L)</span></span>
+          <span className="ctrl-label">읽기 보조</span>
           <div className="seg">
             <button
               className={`seg-btn ${reading.bionic ? "on" : ""}`}
@@ -331,8 +477,21 @@ export function TypographyPanel({
             >
               문장 줄바꿈
             </button>
+            <button
+              className={`seg-btn ${reading.contextTranslate ? "on" : ""}`}
+              title="선택한 글자를 우클릭으로 번역합니다. 꺼도 T 키로는 됩니다."
+              onClick={() => setReading({ contextTranslate: !reading.contextTranslate })}
+            >
+              우클릭 번역
+            </button>
+            <button
+              className={`seg-btn ${reading.selToolbar ? "on" : ""}`}
+              title="글자를 고르면 선택 위에 작은 도구 막대"
+              onClick={() => setReading({ selToolbar: !reading.selToolbar })}
+            >
+              선택 툴바
+            </button>
           </div>
-          <p className="typo-note">Bionic=단어 앞부분 굵게, 문장 줄바꿈=문장 끝마다 줄바꿈(진짜 문장만).</p>
         </div>
 
         {/* 단축키 */}

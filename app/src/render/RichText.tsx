@@ -7,7 +7,7 @@
 import { useContext, useMemo, Fragment, type ReactNode } from "react";
 import katex from "katex";
 import DOMPurify from "dompurify";
-import { FootnoteContext } from "./footnotes";
+import { FootnoteContext } from "./footnoteContext";
 import { FootnoteRef } from "./FootnoteRef";
 import { CrossRefContext, findMentions, hasResolvableMention, type RefTarget } from "./crossrefs";
 import { RefLink } from "./RefLink";

@@ -1,8 +1,9 @@
 // 파일탐색기형 라이브러리 — 중첩 폴더 + 다중 선택 + 이동/삭제/이름변경.
 // 폴더/배정/이름은 library.json(메타)에만 저장. 문서 파일은 docs:delete 로만 영구 삭제.
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { DocSummary } from "../../electron/preload";
+import type { AutoJobStatus, DocSummary } from "../../electron/preload";
 import { GalpiMark } from "../ui/GalpiMark";
+import "./autoBadge.css";
 
 const GEAR = "⚙";
 
@@ -53,6 +54,21 @@ export function Library({ docs, onOpen, onToggleFinished, onRefresh, onOpenSetti
 
   useEffect(() => {
     window.paperAPI.loadLibrary().then(setLib);
+  }, []);
+
+  // 추가 시 자동 처리(번역 → 요약) 진행 — 카드 하단 배지로만 보인다.
+  const [auto, setAuto] = useState<Record<string, AutoJobStatus>>({});
+  useEffect(() => {
+    let pushed = false; // 초기 조회보다 push 가 먼저 오면 늦은 조회 결과로 되돌리지 않는다
+    const off = window.paperAPI.onAutoChanged((m) => {
+      pushed = true;
+      setAuto(m ?? {});
+    });
+    window.paperAPI
+      .autoStatus()
+      .then((m) => { if (!pushed) setAuto(m ?? {}); })
+      .catch(() => { /* 핸들러 없음 — 배지 없이 */ });
+    return off;
   }, []);
 
   const persist = (next: LibMeta) => {
@@ -372,6 +388,7 @@ export function Library({ docs, onOpen, onToggleFinished, onRefresh, onOpenSetti
                   ) : (
                     `${d.page_count}p`
                   )}
+                  <AutoBadge st={d.state === "error" ? undefined : auto[d.doc_id]} />
                   {read && <span className="doc-dot">·</span>}
                   {read && <span>{read} 읽음</span>}
                 </span>
@@ -430,6 +447,25 @@ export function Library({ docs, onOpen, onToggleFinished, onRefresh, onOpenSetti
         </>
       )}
     </div>
+  );
+}
+
+// ── 자동 처리 배지 ──────────────────────────────────────────────
+// 추출 중 표시는 위의 d.state 가 이미 하니 extracting 은 그리지 않는다. done 이면 사라진다.
+function AutoBadge({ st }: { st?: AutoJobStatus }) {
+  if (!st) return null;
+  if (st.stage === "error") {
+    return <span className="auto-err" title={st.error ? `자동 처리 오류 · ${st.error}` : "자동 처리 오류"} aria-label="자동 처리 오류" />;
+  }
+  if (st.stage !== "translate" && st.stage !== "summary") return null;
+  const n = st.stage === "translate" && st.total ? ` ${st.done ?? 0}/${st.total}` : "";
+  return (
+    <>
+      <span className="doc-dot">·</span>
+      <span className="auto-badge" title={st.stage === "translate" ? "자동 번역 중" : "핵심 요약 중"}>
+        {st.stage === "translate" ? "번역" : "요약"}{n}
+      </span>
+    </>
   );
 }
 

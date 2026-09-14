@@ -23,7 +23,8 @@ export function useScrollMemory(docId: string | null) {
     const currentAnchor = (): ScrollAnchor | null => {
       if (sc.scrollTop <= 1) return { block: "", frac: 0 };
       const scTop = sc.getBoundingClientRect().top;
-      for (const el of sc.querySelectorAll<HTMLElement>("[data-block-id]")) {
+      // 리플로우 본문 블록만 — 원본 모드 지면 텍스트층 줄(.src-tl-line)도 data-block-id 를 달지만 앵커로 쓰면 복원 위치가 어긋난다.
+      for (const el of sc.querySelectorAll<HTMLElement>(".reader-content [data-block-id]")) {
         const r = el.getBoundingClientRect();
         if (r.height > 0 && r.bottom > scTop + 1) {
           return { block: el.dataset.blockId!, frac: Math.min(1, Math.max(0, (scTop - r.top) / r.height)) };
@@ -51,7 +52,7 @@ export function useScrollMemory(docId: string | null) {
       if (disposed) return;
       const a = st?.scroll_anchor;
       if (a?.block) {
-        const el = sc.querySelector<HTMLElement>(`[data-block-id="${CSS.escape(a.block)}"]`);
+        const el = sc.querySelector<HTMLElement>(`.reader-content [data-block-id="${CSS.escape(a.block)}"]`);
         if (el) {
           const r = el.getBoundingClientRect();
           sc.scrollTop += r.top - sc.getBoundingClientRect().top + r.height * a.frac;

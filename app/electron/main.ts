@@ -7,8 +7,21 @@ import fs from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { watch, existsSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { appSupportDir, docsRoot } from "./paths";
+import { migratePlaintextKeys, patchSettings, readSettings, saveSettings } from "./settings";
+import { registerAIService } from "./ai/service";
+import { disposePool } from "./ai/agyBackend";
+import { checkAndApply, fetchLatestRelease } from "./updater";
+import { registerChatService } from "./ai/chat";
+import { docDirOf, registerSummaryService } from "./ai/summary";
+import { autoOnDeleted, autoOnExit, autoOnQueued, docIdForPdf, registerAutoPipeline } from "./ai/autoPipeline";
+import { loadLedger } from "./usage";
 
 const isDev = !app.isPackaged;
+
+// dev 전용 CDP 포트 — 개발 중 렌더러를 스크립트로 붙잡아 검증하기 위해서다.
+// 패키징 앱에는 절대 안 붙는다(isPackaged 가드).
+if (isDev) app.commandLine.appendSwitch("remote-debugging-port", "9222");
 
 // 앱 이름 — dev 에서 메뉴/독이 "Electron" 으로 뜨지 않게(패키징은 productName 적용).
 app.setName("갈피");
@@ -19,33 +32,8 @@ function devIconPath(): string {
 }
 
 // 배포용: 친구가 공개 릴리스에서 업데이트를 받아볼 GitHub 저장소.
-const RELEASES_REPO = "ChanchanCode/galpi";
 
-// 데이터 폴더: ~/Library/Application Support/Galpi (구버전은 PaperReader → 최초 실행 시 이전).
-const DATA_DIR_NAME = "Galpi";
-const LEGACY_DATA_DIR_NAME = "PaperReader";
-function appSupportDir(): string {
-  return path.join(app.getPath("appData"), DATA_DIR_NAME);
-}
-function legacyAppSupportDir(): string {
-  return path.join(app.getPath("appData"), LEGACY_DATA_DIR_NAME);
-}
-function settingsPath(): string {
-  return path.join(appSupportDir(), "settings.json");
-}
-
-// 구 데이터 폴더(PaperReader)를 새 폴더(Galpi)로 한 번만 이전(문서·설정·라이브러리·pyenv 통째 이동).
-async function migrateLegacyDataDir(): Promise<void> {
-  const cur = appSupportDir();
-  const legacy = legacyAppSupportDir();
-  if (existsSync(cur) || !existsSync(legacy)) return; // 이미 이전됐거나 구 폴더 없음
-  try {
-    await fs.rename(legacy, cur);
-    console.log(`[migrate] ${legacy} → ${cur}`);
-  } catch (err) {
-    console.warn("[migrate] 데이터 폴더 이전 실패(무시):", err);
-  }
-}
+// 데이터 폴더 경로(appSupportDir / settingsPath / docsRoot)는 ./paths 에 모아 두었다.
 
 // 추출 파이프라인 스크립트(extract.py 등) 위치.
 //   dev: repo/pipeline · 패키징: 앱 리소스에 동봉(extraResources) · 환경변수로 재정의 가능.
@@ -58,12 +46,10 @@ function pipelineScriptsDir(): string {
 //   env PAPER_PYTHON → settings.pythonPath → 기본 pyenv(앱지원폴더) → dev venv.
 async function resolvePython(): Promise<string> {
   if (process.env.PAPER_PYTHON) return process.env.PAPER_PYTHON;
-  const s = (await readJson(settingsPath())) as { pythonPath?: string } | null;
-  if (s?.pythonPath && existsSync(s.pythonPath)) return s.pythonPath;
+  const s = await readSettings();
+  if (s.pythonPath && existsSync(s.pythonPath)) return s.pythonPath;
   const def = path.join(appSupportDir(), "pyenv", "bin", "python");
   if (existsSync(def)) return def;
-  const legacy = path.join(legacyAppSupportDir(), "pyenv", "bin", "python"); // 이전 전 구버전 호환
-  if (existsSync(legacy)) return legacy;
   const dev = path.resolve(__dirname, "../../pipeline/.venv/bin/python");
   if (existsSync(dev)) return dev;
   return def; // 없으면 기본 경로 반환(상태/에러 메시지에 표시)
@@ -73,13 +59,6 @@ async function resolvePython(): Promise<string> {
 protocol.registerSchemesAsPrivileged([
   { scheme: "paper", privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
 ]);
-
-// 추출 파이프라인과 공유하는 문서 루트.
-// macOS: ~/Library/Application Support/Galpi/docs
-function docsRoot(): string {
-  // pipeline/extract.py 의 default_output_root() 와 동일 위치(<appData>/Galpi/docs).
-  return path.join(appSupportDir(), "docs");
-}
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -109,10 +88,23 @@ function createWindow() {
 function registerDocProtocol() {
   protocol.handle("paper", async (request) => {
     const url = new URL(request.url);
-    const docId = url.hostname;
-    const rel = decodeURIComponent(url.pathname).replace(/^\/+/, "");
+    // 새 형식 paper://doc/<docId>/<rel> (docId 는 경로 첫 조각). 옛 형식 paper://<docId>/<rel> 도 받는다.
+    let docId: string;
+    let rel: string;
+    try {
+      const segs = url.pathname.replace(/^\/+/, "").split("/");
+      if (url.hostname === "doc") {
+        docId = decodeURIComponent(segs.shift() ?? "");
+        rel = segs.map(decodeURIComponent).join("/");
+      } else {
+        docId = url.hostname;
+        rel = decodeURIComponent(url.pathname).replace(/^\/+/, "");
+      }
+    } catch {
+      return new Response("bad request", { status: 400 });
+    }
     const target = path.normalize(path.join(docsRoot(), docId, rel));
-    if (!target.startsWith(docsRoot())) {
+    if (!docId || !target.startsWith(docsRoot() + path.sep)) {
       return new Response("forbidden", { status: 403 });
     }
     return net.fetch(pathToFileURL(target).toString());
@@ -223,12 +215,15 @@ ipcMain.handle("library:save", async (_e, lib: unknown) => {
   return true;
 });
 // 문서 영구 삭제 — docs/<docId> 폴더 제거. id 검증으로 경로 탈출 차단.
+// (문서 id 는 파일명의 한글 등 유니코드 글자를 그대로 쓴다 — ASCII 만 받으면 한글 이름 PDF 를 못 지운다.)
 ipcMain.handle("docs:delete", async (_e, docId: string) => {
-  if (!/^[A-Za-z0-9._-]+$/.test(docId) || docId === "." || docId === "..") {
+  const dir = docDirOf(docId);
+  if (!dir) {
     return { error: "잘못된 문서 ID" };
   }
+  autoOnDeleted(docId); // 자동 번역·요약 대기열에서 빼고, 도는 중이면 끊는다
   try {
-    await fs.rm(path.join(docsRoot(), docId), { recursive: true, force: true });
+    await fs.rm(dir, { recursive: true, force: true });
     return { ok: true };
   } catch (err) {
     return { error: String(err) };
@@ -236,19 +231,16 @@ ipcMain.handle("docs:delete", async (_e, docId: string) => {
 });
 
 // 전역 설정 (§10) — 기본 타이포·폰트·단축키.
+// 저장은 **부분 병합 + 원자적 쓰기**(H2). 렌더러가 자기 소유 키만 보내도
+// main 이 쓴 pythonPath 같은 값이 살아남고, 쓰기 도중 크래시해도 반쪽 파일이 안 남는다.
 ipcMain.handle("settings:load", async () => {
-  const file = settingsPath();
-  try {
-    return JSON.parse(await fs.readFile(file, "utf8"));
-  } catch {
-    return null;
-  }
+  const s = await readSettings();
+  return Object.keys(s).length ? s : null;
 });
 
 ipcMain.handle("settings:save", async (_e, settings: unknown) => {
-  const dir = appSupportDir();
-  await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(path.join(dir, "settings.json"), JSON.stringify(settings, null, 2));
+  if (!settings || typeof settings !== "object") return false;
+  await saveSettings(settings as Record<string, unknown>);
   return true;
 });
 
@@ -290,7 +282,7 @@ async function sweepStaleExtracting(): Promise<void> {
   }
   for (const e of entries) {
     if (!e.isDirectory()) continue;
-    if (extractActive || extractQueue.some((j) => j.docId === e.name)) continue;
+    if (extractActive || extractQueue.some((j) => j.docId === e.name || j.newDocId === e.name)) continue;
     const file = path.join(root, e.name, "status.json");
     const status = await readJson(file);
     if (status?.state !== "extracting") continue;
@@ -322,231 +314,11 @@ async function startDocsWatcher() {
   }
 }
 
-// ── 번역: Gemini API (클라우드, 사용자 본인 무료 키) ───────────────────────
-// 키는 전역 settings.json 의 translation.apiKey 에 로컬 저장(앱이 키를 생성/전송하지 않음).
-// ⚠️ 선택 텍스트가 Google 로 전송됨 — 미공개 논문이면 주의(설정에서 끄거나 키 미입력).
-// (settingsPath() 는 상단에 정의)
-
-const TRANSLATE_PROMPT =
-  "You are a translator for an English→Korean reader of finance/economics academic papers. " +
-  "Translate the user's selected text into natural, fluent Korean, preserving technical terms with their standard Korean equivalents. " +
-  "If the selection is a single word or short phrase, briefly list its main senses relevant to this academic context. " +
-  "Respond with ONLY the Korean result — no preamble, no quotes.\n\nText:\n";
-
-ipcMain.handle("translate:text", async (_e, text: string) => {
-  const settings = (await readJson(settingsPath())) as
-    | { translation?: { apiKey?: string; model?: string } }
-    | null;
-  const apiKey = settings?.translation?.apiKey?.trim();
-  // 기본 모델: gemini-2.5-flash-lite (무료 할당량 넉넉). 옛 기본값(2.0-flash)은 자동 교체 — 429 회피.
-  const saved = settings?.translation?.model?.trim();
-  const model = !saved || saved === "gemini-2.0-flash" ? "gemini-2.5-flash-lite" : saved;
-  if (!apiKey) {
-    return { error: "읽기 설정 → 번역에서 Gemini API 키를 입력하세요 (aistudio.google.com 무료 발급)." };
-  }
-  try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-    const r = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: TRANSLATE_PROMPT + text }] }],
-        generationConfig: { temperature: 0.2 },
-      }),
-    });
-    if (!r.ok) {
-      const body = await r.text();
-      return { error: `Gemini API 오류 ${r.status}: ${body.slice(0, 160)}` };
-    }
-    const data = (await r.json()) as {
-      candidates?: { content?: { parts?: { text?: string }[] } }[];
-    };
-    const out = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
-    return { translation: out.trim() };
-  } catch (err) {
-    return { error: String(err) };
-  }
-});
-
-// ── 멀티 제공자 AI (Gemini / OpenAI / Anthropic) ─────────────────────────
-type AIProvider = "gemini" | "openai" | "anthropic";
-const TRANSLATE_SYS = TRANSLATE_PROMPT.replace(/\n\nText:\n$/, "");
-
-// settings.ai → {provider, model, key}. 레거시 settings.translation 도 흡수.
-function resolveAI(s: any): { provider: AIProvider; model: string; key: string } {
-  const ai = s?.ai;
-  if (ai?.provider) {
-    const provider = ai.provider as AIProvider;
-    let model = (ai.models?.[provider] ?? "").trim();
-    if (provider === "gemini" && (!model || model === "gemini-2.0-flash")) model = "gemini-2.5-flash-lite";
-    return { provider, model, key: (ai.keys?.[provider] ?? "").trim() };
-  }
-  const t = s?.translation;
-  const saved = t?.model?.trim();
-  const model = !saved || saved === "gemini-2.0-flash" ? "gemini-2.5-flash-lite" : saved;
-  return { provider: "gemini", model, key: (t?.apiKey ?? "").trim() };
-}
-
-// SSE data 라인 리더(제공자 공통)
-async function readSSE(body: ReadableStream<Uint8Array>, onData: (data: string) => void): Promise<void> {
-  const reader = body.getReader();
-  const dec = new TextDecoder();
-  let buf = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    let nl: number;
-    while ((nl = buf.indexOf("\n")) >= 0) {
-      const line = buf.slice(0, nl).trim();
-      buf = buf.slice(nl + 1);
-      if (line.startsWith("data:")) onData(line.slice(5).trim());
-    }
-  }
-}
-
-interface StreamResult {
-  full: string;
-  error?: string;
-  status?: number;
-}
-
-async function streamProvider(
-  provider: AIProvider,
-  key: string,
-  model: string,
-  text: string,
-  send: (t: string) => void,
-): Promise<StreamResult> {
-  let r: Response;
-  if (provider === "gemini") {
-    r = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${key}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: TRANSLATE_SYS }] },
-          contents: [{ parts: [{ text }] }],
-          // thinking 끄기 → 2.5 모델 지연 대폭 감소
-          generationConfig: { temperature: 0.2, thinkingConfig: { thinkingBudget: 0 } },
-        }),
-      },
-    );
-  } else if (provider === "openai") {
-    r = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-      body: JSON.stringify({
-        model,
-        stream: true,
-        temperature: 0.2,
-        messages: [
-          { role: "system", content: TRANSLATE_SYS },
-          { role: "user", content: text },
-        ],
-      }),
-    });
-  } else {
-    r = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({
-        model,
-        max_tokens: 1024,
-        temperature: 0.2,
-        stream: true,
-        system: TRANSLATE_SYS,
-        messages: [{ role: "user", content: text }],
-      }),
-    });
-  }
-  if (!r.ok || !r.body) {
-    const b = await r.text().catch(() => "");
-    return { full: "", error: `${provider} API 오류 ${r.status}: ${b.slice(0, 200)}`, status: r.status };
-  }
-  let full = "";
-  await readSSE(r.body, (d) => {
-    if (!d || d === "[DONE]") return;
-    try {
-      const j = JSON.parse(d) as any;
-      let t = "";
-      if (provider === "gemini") t = j.candidates?.[0]?.content?.parts?.map((p: any) => p.text ?? "").join("") ?? "";
-      else if (provider === "openai") t = j.choices?.[0]?.delta?.content ?? "";
-      else if (j.type === "content_block_delta" && j.delta?.type === "text_delta") t = j.delta.text ?? "";
-      if (t) {
-        full += t;
-        send(t);
-      }
-    } catch {
-      /* keepalive/부분 라인 무시 */
-    }
-  });
-  return { full };
-}
-
-// 스트리밍 번역 — 제공자별 SSE → 조각 즉시 전송. 일시 오류(429/503/500/529)는 1회 재시도.
-ipcMain.handle("translate:stream", async (e, text: string, reqId: number) => {
-  const s = await readJson(settingsPath());
-  const { provider, model, key } = resolveAI(s);
-  if (!key) return { error: `${provider.toUpperCase()} API 키가 없습니다. 설정 → AI 에서 입력하세요.` };
-  if (!model) return { error: "모델을 선택하세요 (설정 → AI)." };
-  const send = (delta: string) => {
-    if (!e.sender.isDestroyed()) e.sender.send("translate:delta", { id: reqId, delta });
-  };
-  try {
-    let res = await streamProvider(provider, key, model, text, send);
-    if (res.error && res.full === "" && res.status && [429, 500, 503, 529].includes(res.status)) {
-      await new Promise((r) => setTimeout(r, 900)); // 과부하 일시 오류 → 잠깐 쉬고 1회 재시도
-      res = await streamProvider(provider, key, model, text, send);
-    }
-    return res.error ? { error: res.error } : { translation: res.full.trim() };
-  } catch (err) {
-    return { error: String(err) };
-  }
-});
-
-// 제공자별 모델 목록 조회 (키로 직접 API 호출)
-ipcMain.handle("ai:listModels", async (_e, provider: AIProvider, key: string) => {
-  const k = (key ?? "").trim();
-  if (!k) return { error: "키를 먼저 입력하세요." };
-  try {
-    if (provider === "gemini") {
-      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=${k}`);
-      if (!r.ok) return { error: `오류 ${r.status}` };
-      const j = (await r.json()) as any;
-      const models = (j.models ?? [])
-        .filter((m: any) => (m.supportedGenerationMethods ?? []).includes("generateContent"))
-        .map((m: any) => String(m.name ?? "").replace(/^models\//, ""))
-        .filter(Boolean);
-      return { models };
-    }
-    if (provider === "openai") {
-      const r = await fetch("https://api.openai.com/v1/models", { headers: { Authorization: `Bearer ${k}` } });
-      if (!r.ok) return { error: `오류 ${r.status}` };
-      const j = (await r.json()) as any;
-      const models = (j.data ?? [])
-        .map((m: any) => m.id as string)
-        .filter((id: string) => /^(gpt|o\d|chatgpt)/i.test(id))
-        .sort();
-      return { models };
-    }
-    const r = await fetch("https://api.anthropic.com/v1/models?limit=100", {
-      headers: { "x-api-key": k, "anthropic-version": "2023-06-01" },
-    });
-    if (!r.ok) return { error: `오류 ${r.status}` };
-    const j = (await r.json()) as any;
-    const models = (j.data ?? []).map((m: any) => m.id as string).filter(Boolean);
-    return { models };
-  } catch (err) {
-    return { error: String(err) };
-  }
-});
-
 // ── PDF 추출: extract.py 를 자식 프로세스로 실행 — '직렬 큐'(동시 1개) ────────
 // 여러 PDF 를 한꺼번에 끌어다 놔도 한 번에 하나씩만 처리한다(메모리 폭주·먹통 방지).
 // 추출은 document.json/status.json 을 점진 기록 → 와처가 라이브러리를 자동 갱신.
-interface ExtractJob { pdfPath: string; py: string; scriptsDir: string; script: string; docId?: string }
+// docId = 재추출(--doc-id 로 기존 폴더 유지). isNew = 새 PDF 추가 — 끝나면 자동 번역·요약(newDocId 는 미리 계산한 id).
+interface ExtractJob { pdfPath: string; py: string; scriptsDir: string; script: string; docId?: string; isNew: boolean; newDocId?: string }
 const extractQueue: ExtractJob[] = [];
 let extractActive = false;
 
@@ -575,23 +347,28 @@ function runNextExtract(): void {
   const cmd = useNice ? "nice" : job.py;
   const args = useNice ? ["-n", "15", job.py, job.script, job.pdfPath] : [job.script, job.pdfPath];
   if (job.docId) args.push("--doc-id", job.docId); // 재추출: 기존 문서 폴더 유지
+  const notifyAuto = (code: number | null) => {
+    if (job.isNew && job.newDocId) autoOnExit(job.newDocId, code);
+  };
   let child;
   try {
     child = spawn(cmd, args, { cwd: job.scriptsDir, stdio: "ignore", env });
   } catch {
     extractActive = false;
+    notifyAuto(-1);
     setTimeout(runNextExtract, 200);
     return;
   }
   let settled = false;
-  const done = () => {
+  const done = (code: number | null) => {
     if (settled) return;
     settled = true;
     extractActive = false;
+    notifyAuto(code);
     setTimeout(runNextExtract, 500); // 다음 작업 전 잠깐 — 메모리 회수 여유
   };
-  child.on("error", done);
-  child.on("close", done);
+  child.on("error", () => done(-1));
+  child.on("close", (code) => done(code));
 }
 
 ipcMain.handle("pipeline:extract", async (_e, pdfPath: string) => {
@@ -610,13 +387,18 @@ ipcMain.handle("pipeline:extract", async (_e, pdfPath: string) => {
   if (!/\.pdf$/i.test(pdfPath)) {
     return { error: "PDF 파일만 추출할 수 있습니다." };
   }
-  if (extractQueue.some((j) => j.pdfPath === pdfPath)) {
-    return { started: true, queued: true }; // 이미 대기 중인 같은 파일
+  // extract.py 와 같은 규칙으로 id 를 미리 계산 — 자동 파이프라인·라이브러리 카드가 추출 전부터 문서를 가리킨다.
+  // 못 읽는 파일이면 extract.py 도 실패하므로 여기서 막지 않는다(오류는 status.json 경로로 보인다).
+  const docId = await docIdForPdf(pdfPath).catch(() => undefined);
+  const dup = extractQueue.find((j) => j.pdfPath === pdfPath);
+  if (dup) {
+    return { started: true, queued: true, docId: dup.newDocId ?? docId }; // 이미 대기 중인 같은 파일
   }
   const position = extractActive || extractQueue.length > 0 ? extractQueue.length + 1 : 0;
-  extractQueue.push({ pdfPath, py, scriptsDir, script });
+  extractQueue.push({ pdfPath, py, scriptsDir, script, isNew: true, newDocId: docId });
+  if (docId) autoOnQueued(docId);
   runNextExtract();
-  return { started: true, queued: position > 0, position };
+  return { started: true, queued: position > 0, position, docId };
 });
 
 // 재추출 — 문서 폴더의 source.pdf 로 같은 doc_id 에 다시 추출(주석·읽기상태는 state.json 이라 보존).
@@ -629,7 +411,7 @@ ipcMain.handle("pipeline:reextract", async (_e, docId: string) => {
   if (!existsSync(py)) return { error: "추출 엔진이 설치되지 않았습니다." };
   if (!existsSync(script)) return { error: `extract.py 없음: ${script}` };
   if (extractQueue.some((j) => j.docId === docId)) return { started: true, queued: true };
-  extractQueue.push({ pdfPath: src, py, scriptsDir, script, docId });
+  extractQueue.push({ pdfPath: src, py, scriptsDir, script, docId, isNew: false });
   runNextExtract();
   return { started: true };
 });
@@ -657,9 +439,7 @@ ipcMain.handle("pipeline:pickPython", async () => {
   });
   if (res.canceled || !res.filePaths[0]) return { canceled: true };
   const pythonPath = res.filePaths[0];
-  const prev = ((await readJson(settingsPath())) as Record<string, unknown> | null) ?? {};
-  await fs.mkdir(appSupportDir(), { recursive: true });
-  await fs.writeFile(settingsPath(), JSON.stringify({ ...prev, pythonPath }, null, 2), "utf8");
+  await patchSettings("pythonPath", pythonPath);
   return { pythonPath, pythonOk: existsSync(pythonPath) };
 });
 
@@ -697,98 +477,12 @@ ipcMain.handle("app:openExternal", (_e, url: string) => {
 });
 
 // 공개 릴리스의 최신 태그/에셋 조회. 수동 확인(설정)·실행 시 자동 확인 양쪽에서 재사용.
-interface ReleaseInfo {
-  current: string;
-  latest?: string;
-  url?: string; // 릴리스 페이지
-  dmgUrl?: string; // .dmg 에셋 직접 다운로드 URL
-  hasUpdate?: boolean;
-  error?: string;
-}
-async function fetchLatestRelease(): Promise<ReleaseInfo> {
-  const current = app.getVersion();
-  try {
-    const r = await fetch(`https://api.github.com/repos/${RELEASES_REPO}/releases/latest`, {
-      headers: { Accept: "application/vnd.github+json", "User-Agent": "Galpi" },
-    });
-    if (!r.ok) {
-      return { current, error: `릴리스를 찾을 수 없습니다 (${r.status}). 저장소/릴리스가 공개인지 확인하세요.` };
-    }
-    const data = (await r.json()) as {
-      tag_name?: string;
-      html_url?: string;
-      assets?: { name: string; browser_download_url: string }[];
-    };
-    const latest = (data.tag_name ?? "").replace(/^v/i, "");
-    const url = data.html_url ?? `https://github.com/${RELEASES_REPO}/releases`;
-    const dmgUrl = (data.assets ?? []).find((a) => /\.dmg$/i.test(a.name))?.browser_download_url;
-    const hasUpdate = !!latest && cmpVersion(latest, current) > 0;
-    return { current, latest, url, dmgUrl, hasUpdate };
-  } catch (err) {
-    return { current, error: String(err) };
-  }
-}
+// 업데이트 확인·자동 적용은 updater.ts (zip 받아 번들 교체 → 재시작 · 나중에면 종료 시 적용).
 ipcMain.handle("app:checkUpdate", fetchLatestRelease);
-
-// .dmg 를 다운로드 폴더로 받아 경로 반환.
-async function downloadDmg(url: string): Promise<string> {
-  const name = url.split("/").pop() || "Galpi-update.dmg";
-  const dest = path.join(app.getPath("downloads"), name);
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`다운로드 실패 (${res.status})`);
-  await fs.writeFile(dest, Buffer.from(await res.arrayBuffer()));
-  return dest;
-}
-
-// 실행 시 자동 업데이트 확인 → 있으면 받아서 dmg 를 열어 교체 안내.
-// (코드 서명이 없어 조용한 자동설치는 불가 → 받은 dmg 에서 앱을 드래그해 덮어쓰는 방식.)
-let launchUpdateChecked = false;
-async function checkUpdateOnLaunch(win: BrowserWindow) {
-  if (launchUpdateChecked) return;
-  launchUpdateChecked = true;
-  let info: ReleaseInfo;
-  try {
-    info = await fetchLatestRelease();
-  } catch {
-    return; // 네트워크 실패는 조용히 무시(실행 방해 금지)
-  }
-  if (!info.hasUpdate || !info.latest || win.isDestroyed()) return;
-  const { response } = await dialog.showMessageBox(win, {
-    type: "info",
-    buttons: ["지금 업데이트", "나중에"],
-    defaultId: 0,
-    cancelId: 1,
-    message: `새 버전 v${info.latest} 이(가) 있습니다.`,
-    detail: `현재 버전은 v${info.current} 입니다. 지금 받아서 설치할까요?`,
-  });
-  if (response !== 0) return;
-  try {
-    if (!info.dmgUrl) throw new Error("dmg 에셋을 찾을 수 없습니다.");
-    const dmg = await downloadDmg(info.dmgUrl);
-    await shell.openPath(dmg); // dmg 마운트 → Finder 창
-    if (!win.isDestroyed()) {
-      await dialog.showMessageBox(win, {
-        type: "info",
-        buttons: ["확인"],
-        message: "새 버전을 받았습니다.",
-        detail: "열린 디스크 이미지(갈피)에서 앱을 ‘응용 프로그램’ 폴더로 드래그해 덮어쓴 뒤, 갈피를 다시 실행하세요.",
-      });
-    }
-  } catch {
-    if (info.url) void shell.openExternal(info.url); // 실패 시 릴리스 페이지로 폴백
-  }
-}
-
-// semver-lite 비교 (a>b → 1)
-function cmpVersion(a: string, b: string): number {
-  const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
-  const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
-    if (d) return d > 0 ? 1 : -1;
-  }
-  return 0;
-}
+ipcMain.handle("app:installUpdate", (e) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  return win ? checkAndApply(win, true, disposePool) : { state: "error", current: app.getVersion(), error: "창 없음" };
+});
 
 app.whenReady().then(async () => {
   // dev 에서 독 아이콘도 갈피로(패키징 앱은 번들 .icns 사용)
@@ -796,17 +490,25 @@ app.whenReady().then(async () => {
     const img = nativeImage.createFromPath(devIconPath());
     if (!img.isEmpty()) app.dock.setIcon(img);
   }
-  await migrateLegacyDataDir(); // 구 PaperReader 폴더 → Galpi (최초 1회)
+  await migratePlaintextKeys(); // settings.json 의 평문 API 키 → secrets.json (최초 1회)
+  await loadLedger(); // 사용량 원장을 인메모리 집계로 (§4.1)
+  registerAIService();
+  registerChatService();
+  registerSummaryService();
+  registerAutoPipeline(); // 지난 실행에서 끝나지 않은 자동 번역·요약을 잠시 뒤 이어서 돈다
   registerDocProtocol();
   const win = createWindow();
   await sweepStaleExtracting(); // 지난 실행에서 고착된 '추출 중' 문서 → error 로 복구 가능하게
   startDocsWatcher();
   // 실행할 때마다 업데이트 확인(패키징 빌드만; dev 제외). UI 가 먼저 뜨도록 잠시 뒤.
-  if (!isDev) setTimeout(() => void checkUpdateOnLaunch(win), 2500);
+  if (!isDev) setTimeout(() => void checkAndApply(win, false, disposePool), 2500);
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
+
+// 종료 시 agy 웜 스페어(번역·채팅 풀)를 바로 정리 — 파이프가 닫히길 기다리며 고아 프로세스로 남지 않게.
+app.on("before-quit", () => disposePool());
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();

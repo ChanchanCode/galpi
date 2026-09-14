@@ -5,17 +5,16 @@ import { create } from "zustand";
 import { DEFAULT_TYPOGRAPHY, type Typography } from "./typography";
 import { DEFAULT_KEYMAP, type ActionId, type Keymap } from "../keys/keymap";
 import { encodePreset, sanitizeTypography, type SavedPreset } from "../presets/share";
-import { DEFAULT_AI, migrateAI, type AIConfig, type AIProvider } from "../ai/ai";
+import { DEFAULT_AI, loadAI, type AIConfig, type AIProvider } from "../ai/ai";
 import type { ReadingOpts } from "../render/reading";
 import type { UserFont } from "../../electron/preload";
 
-const DEFAULT_READING: ReadingOpts = { bionic: false, sentenceBreak: false };
+const DEFAULT_READING: ReadingOpts = { bionic: false, sentenceBreak: false, contextTranslate: false, selToolbar: true };
 
 interface GlobalSettings {
   typography: Typography;
   fonts: UserFont[];
-  translation?: { apiKey?: string; model?: string }; // 레거시(마이그레이션용)
-  ai?: AIConfig;
+  ai?: Partial<AIConfig>;
   keymap?: Partial<Keymap>;
   customPresets?: SavedPreset[];
   reading?: Partial<ReadingOpts>;
@@ -41,7 +40,7 @@ interface Store {
   resetToDefault: () => void;
   addUserFonts: () => Promise<void>;
   setAIProvider: (provider: AIProvider) => void;
-  setAIKey: (provider: AIProvider, key: string) => void;
+  setAIKey: (provider: AIProvider, key: string) => Promise<void>;
   setAIModel: (provider: AIProvider, model: string) => void;
 
   setKeybinding: (id: ActionId, combo: string) => void;
@@ -68,10 +67,11 @@ export const useStore = create<Store>((set, get) => ({
   // 앱 시작 시 전역 설정 로드 (타이포 + 사용자 폰트 + AI + 단축키 + 사용자 프리셋)
   initSession: async () => {
     const g = (await window.paperAPI.loadSettings()) as GlobalSettings | null;
+    const keyPresent = await window.paperAPI.aiKeyStatus();
     set({
       typography: { ...DEFAULT_TYPOGRAPHY, ...(g?.typography ?? {}) },
       userFonts: g?.fonts ?? [],
-      ai: migrateAI(g?.ai, g?.translation),
+      ai: loadAI(g?.ai, keyPresent),
       keymap: { ...DEFAULT_KEYMAP, ...(g?.keymap ?? {}) },
       customPresets: Array.isArray(g?.customPresets)
         ? g!.customPresets!.map((p) => ({ ...p, typography: sanitizeTypography(p.typography) }))
@@ -113,9 +113,10 @@ export const useStore = create<Store>((set, get) => ({
     set((st) => ({ ai: { ...st.ai, provider } }));
     void persistSettings(get);
   },
-  setAIKey: (provider, key) => {
-    set((st) => ({ ai: { ...st.ai, keys: { ...st.ai.keys, [provider]: key } } }));
-    void persistSettings(get);
+  // 키는 렌더러 상태에 담지 않는다 — main 이 safeStorage 로 보관하고 존재 여부만 돌려준다.
+  setAIKey: async (provider, key) => {
+    const present = await window.paperAPI.setAIKey(provider, key);
+    set((st) => ({ ai: { ...st.ai, keyPresent: { ...st.ai.keyPresent, ...present } } }));
   },
   setAIModel: (provider, model) => {
     set((st) => ({ ai: { ...st.ai, models: { ...st.ai.models, [provider]: model } } }));
@@ -167,9 +168,18 @@ export function presetShareCode(preset: SavedPreset): string {
 }
 
 // 전역 settings.json 을 한 곳에서 직렬화 — 부분 저장이 다른 키를 덮어쓰지 않게.
+// main 은 부분 병합으로 저장하므로(H2) 여기서 안 보낸 키(pythonPath 등)는 그대로 살아남는다.
+// ai 는 provider/models 만 — 키는 secrets.json 에 따로 있다(H1).
 async function persistSettings(get: () => Store): Promise<void> {
   const { typography, userFonts, ai, keymap, customPresets, reading } = get();
-  await window.paperAPI.saveSettings({ typography, fonts: userFonts, ai, keymap, customPresets, reading });
+  await window.paperAPI.saveSettings({
+    typography,
+    fonts: userFonts,
+    ai: { provider: ai.provider, models: ai.models },
+    keymap,
+    customPresets,
+    reading,
+  });
 }
 
 function dedupeFonts(fonts: UserFont[]): UserFont[] {

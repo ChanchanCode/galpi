@@ -1,3 +1,4 @@
+import { memo } from "react";
 // 블록 렌더러 (명세 §6.1). blocks 를 순서대로 reflow 렌더.
 // 모든 요소에 data-block-id / data-page / data-bbox 부착 (원본대조·하이라이트용).
 import type { Block } from "../types";
@@ -18,7 +19,8 @@ function dataAttrs(b: Block) {
   };
 }
 
-export function BlockRenderer({ block, docId }: Props) {
+// memo — 부모(App) 렌더마다 수백 블록이 다시 그려지지 않게. block 객체는 App 이 문서 단위로 만들어 둔다.
+export const BlockRenderer = memo(function BlockRenderer({ block, docId }: Props) {
   const attrs = dataAttrs(block);
   const assetUrl = (rel?: string) => (rel ? window.paperAPI.assetUrl(docId, rel) : undefined);
 
@@ -59,4 +61,4 @@ export function BlockRenderer({ block, docId }: Props) {
     default:
       return <p {...attrs} className="blk-paragraph"><RichText text={block.text ?? ""} /></p>;
   }
-}
+});

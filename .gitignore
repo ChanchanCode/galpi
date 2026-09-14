@@ -22,3 +22,5 @@ testdata/
 out/
 *.pdf
 !docs/**/*.pdf
+app/dist-test/
+app/.p2build.mjs

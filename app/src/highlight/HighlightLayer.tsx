@@ -1,5 +1,6 @@
-// 키워드 형광펜 (명세 §8) — 단축키 전용. (사용자 요청: 선택 시 뜨던 미니 툴바 제거,
-// text 위 hover UI 금지.) 본문에서 텍스트 선택 후:
+// 키워드 형광펜 (명세 §8) — 단축키 중심. (2026-06 사용자 요청으로 선택 미니 툴바를 뺐다가, 2026-09 채팅 기능과 함께
+// 사용자가 선택 툴바를 다시 요청 → src/selection/SelectionToolbar 가 "galpi:action" 으로 **키 탭과 같은 경로**를 부른다.)
+// 본문에서 텍스트 선택 후:
 //   · 단축키 탭 → 색 순환(노랑→초록→파랑→분홍→보라→해제)
 //   · 단축키 꾹 누름 → 즉시 제거
 // 같은 텍스트가 문서 전체에서 함께 칠해진다.
@@ -9,6 +10,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { PaperDocument } from "../types";
 import { useStore } from "../store/useStore";
 import { baseKey, isEditableTarget, matchCombo } from "../keys/keymap";
+import { onAction } from "../selection/quote";
 import {
   applyHighlights,
   clearHighlights,
@@ -170,6 +172,56 @@ export function HighlightLayer({ doc, rules, updateRules, onCounts }: Props) {
     [updateRules, findRule, flashStatus, setDim],
   );
 
+  // 툴바 스와치: 순환 대신 지정 색. 없으면 그 색으로 생성, 같은 색이면 해제, 다른 색이면 변경.
+  const paint = useCallback(
+    (scope: HlScope, text: string, occurrence: number, color: HlColor) => {
+      const kindLabel = scope === "keyword" ? "키워드 형광펜" : "형광펜";
+      updateRules((prev) => {
+        const existing = findRule(prev, scope, text, occurrence);
+        if (existing && existing.color === color) {
+          flashStatus(`${kindLabel} 해제`);
+          setDim(null);
+          return prev.filter((r) => r.id !== existing.id);
+        }
+        flashStatus(`${COLOR_LABEL[color]} ${kindLabel}`);
+        setDim(text);
+        if (existing) return prev.map((r) => (r.id === existing.id ? { ...r, color } : r));
+        const rule: HighlightRule = {
+          id: newId(),
+          text,
+          color,
+          style: "fill",
+          case_sensitive: false,
+          whole_word: scope === "keyword",
+          label: null,
+          note: null,
+          created_at: new Date().toISOString(),
+          scope,
+          ...(scope === "passage" ? { occurrence } : {}),
+        };
+        return [...prev, rule];
+      });
+    },
+    [updateRules, findRule, flashStatus, setDim],
+  );
+
+  // 현재 선택에 적용 — 키 탭과 툴바가 같은 길을 탄다. passage 는 선택이 같은 텍스트의 몇 번째 출현인지 고정.
+  const applyToSelection = useCallback(
+    (scope: HlScope, color?: HlColor): { text: string; occurrence: number } | null => {
+      const sel = readSelection();
+      if (!sel) return null;
+      let occurrence = 0;
+      if (scope === "passage") {
+        const container = document.querySelector(CONTAINER_SEL) as HTMLElement | null;
+        if (container) occurrence = occurrenceOf(container, sel.text, sel.range);
+      }
+      if (color && CYCLE.includes(color)) paint(scope, sel.text, occurrence, color);
+      else cycle(scope, sel.text, occurrence); // 탭: 즉시 색 순환(생성/순환/해제)
+      return { text: sel.text, occurrence };
+    },
+    [readSelection, cycle, paint],
+  );
+
   // 홀드: 즉시 제거
   const removeMatch = useCallback(
     (scope: HlScope, text: string, occurrence: number) => {
@@ -214,17 +266,10 @@ export function HighlightLayer({ doc, rules, updateRules, onCounts }: Props) {
         return;
       }
 
-      const sel = readSelection();
-      if (!sel) return; // 선택 없으면 통과(다른 입력 방해 안 함)
+      const hit = applyToSelection(scope);
+      if (!hit) return; // 선택 없으면 통과(다른 입력 방해 안 함)
       e.preventDefault();
-      // passage 는 선택이 같은 텍스트의 몇 번째 출현인지 고정.
-      let occurrence = 0;
-      if (scope === "passage") {
-        const container = document.querySelector(CONTAINER_SEL) as HTMLElement | null;
-        if (container) occurrence = occurrenceOf(container, sel.text, sel.range);
-      }
-      cycle(scope, sel.text, occurrence); // 탭: 즉시 색 순환(생성/순환/해제)
-      press.current = { key, scope, text: sel.text, occurrence, startedAt: Date.now(), removed: false };
+      press.current = { key, scope, text: hit.text, occurrence: hit.occurrence, startedAt: Date.now(), removed: false };
       // 선택은 유지 → 연속 탭으로 색 순환 가능
     };
 
@@ -240,7 +285,17 @@ export function HighlightLayer({ doc, rules, updateRules, onCounts }: Props) {
       document.removeEventListener("keyup", onUp);
       press.current = null;
     };
-  }, [keymap.highlight, keymap.highlightPassage, readSelection, cycle, removeMatch]);
+  }, [keymap.highlight, keymap.highlightPassage, applyToSelection, removeMatch]);
+
+  // 선택 툴바(galpi:action) — 키 탭과 같은 경로. 선택이 본문 밖이면 readSelection 이 걸러 아무것도 안 한다.
+  useEffect(
+    () =>
+      onAction((a) => {
+        if (a.id === "highlightPassage") applyToSelection("passage", a.color);
+        else if (a.id === "highlight") applyToSelection("keyword", a.color);
+      }),
+    [applyToSelection],
+  );
 
   return status ? <div className="hl-status">{status}</div> : null;
 }

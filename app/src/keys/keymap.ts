@@ -11,11 +11,14 @@ export type ActionId =
   | "note"
   | "annotations"
   | "translate"
+  | "translateDoc"
+  | "sourceView"
   | "sourcePeek"
   | "sections"
   | "focus"
   | "bionic"
-  | "sentenceBreak";
+  | "sentenceBreak"
+  | "chat";
 
 export interface ActionDef {
   id: ActionId;
@@ -24,7 +27,7 @@ export interface ActionDef {
   defaultCombo: string;
 }
 
-// 화면에 떠다니는 UI 없이 키보드로 동작하는 액션들(사용자 요청: text 위 hover UI 금지).
+// 키보드로 동작하는 액션들(사용자 요청: text 위 hover UI 금지 — 선택 툴바만 예외로 뒤집음, 설정 읽기 탭에서 끔).
 export const ACTIONS: ActionDef[] = [
   { id: "openPdf", label: "PDF 열기", hint: "PDF 파일을 골라 추출 시작 (드래그해 놓아도 동일)", defaultCombo: "Mod+O" },
   { id: "quickSwitch", label: "문서 전환", hint: "최근 읽은 문서 목록에서 바로 전환 (↑↓ · Enter)", defaultCombo: "Mod+P" },
@@ -34,11 +37,14 @@ export const ACTIONS: ActionDef[] = [
   { id: "note", label: "메모", hint: "선택한 문장에 메모 작성(같은 구절을 다시 선택+누르면 편집)", defaultCombo: "M" },
   { id: "annotations", label: "주석 모아보기", hint: "형광펜·메모를 한 화면에 모아보고 위치로 점프", defaultCombo: "I" },
   { id: "translate", label: "번역", hint: "선택 문장 번역 팝오버", defaultCombo: "T" },
+  { id: "translateDoc", label: "문서 번역", hint: "본문 옆에 번역 컬럼 열기/닫기", defaultCombo: "Alt+T" },
+  { id: "sourceView", label: "원본 모드", hint: "본문을 리플로우 ↔ 원본 지면으로 전환", defaultCombo: "Alt+O" },
   { id: "sourcePeek", label: "원문 대조", hint: "선택/현재 위치 블록의 원본 PDF 크롭 보기", defaultCombo: "G" },
   { id: "sections", label: "목차 패널", hint: "섹션 목차 패널 열기/닫기 (스크롤 옆 위치 눈금은 항상 표시)", defaultCombo: "Backslash" },
   { id: "focus", label: "포커스 모드", hint: "현재 문단만 또렷하게 (나머지 흐리게)", defaultCombo: "F" },
   { id: "bionic", label: "Bionic Reading", hint: "단어 앞부분을 굵게 — 시선 유도", defaultCombo: "B" },
   { id: "sentenceBreak", label: "문장 줄바꿈", hint: "문장 끝마다 줄바꿈(진짜 문장만)", defaultCombo: "L" },
+  { id: "chat", label: "AI 채팅", hint: "논문에 대해 묻는 채팅 패널 열기/닫기", defaultCombo: "Mod+L" },
 ];
 
 export type Keymap = Record<ActionId, string>;

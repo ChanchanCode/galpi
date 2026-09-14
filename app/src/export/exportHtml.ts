@@ -147,6 +147,8 @@ export async function buildStandaloneHtml(doc: PaperDocument): Promise<string> {
   if (!live) throw new Error("본문을 찾을 수 없습니다.");
 
   const clone = live.cloneNode(true) as HTMLElement;
+  // 번역 컬럼 행 정렬이 원문 블록에 넣어 둔 여백은 내보내기에 따라가면 안 된다(§7.1 D20).
+  for (const el of clone.querySelectorAll<HTMLElement>("[data-block-id]")) el.style.paddingBottom = "";
   // 임시로 붙여 fetch/직렬화(레이아웃 불필요). 화면 밖.
   await inlineImages(clone);
 

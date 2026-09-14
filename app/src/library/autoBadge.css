@@ -1,0 +1,17 @@
+/* 라이브러리 카드 하단 — 자동 번역·요약 진행 배지. 테마 변수만. */
+.auto-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 0 7px; height: 18px; border-radius: 999px;
+  font-size: 0.72rem; line-height: 1; font-variant-numeric: tabular-nums; white-space: nowrap;
+  color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+/* 진행 중임을 글자 없이 알리는 작은 맥박 점 */
+.auto-badge::before {
+  content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor;
+  animation: auto-pulse 1.4s ease-in-out infinite;
+}
+@keyframes auto-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+.auto-err {
+  display: inline-block; width: 7px; height: 7px; margin-left: 2px; border-radius: 50%;
+  background: color-mix(in srgb, #d2674a 70%, transparent); cursor: help;
+}

@@ -44,7 +44,7 @@ export function SectionRail({ docId, blockCount, panelOpen, onClose }: Props) {
         const top = rect.top - sRect.top + scroller.scrollTop;
         return {
           id: h.dataset.blockId ?? "",
-          label: (h.textContent ?? "").trim().replace(/\s+/g, " "),
+          label: headingText(h),
           level: Number(h.tagName.slice(1)) || 2,
           top,
           ratio: Math.min(1, Math.max(0, top / total)),
@@ -181,4 +181,11 @@ export function SectionRail({ docId, blockCount, panelOpen, onClose }: Props) {
       )}
     </>
   );
+}
+
+// KaTeX 는 화면용 HTML 옆에 MathML(주석에 TeX 원문)을 숨겨 둔다 — textContent 로 읽으면 "β\betaβ" 가 된다.
+function headingText(h: HTMLElement): string {
+  const c = h.cloneNode(true) as HTMLElement;
+  c.querySelectorAll(".katex-mathml").forEach((n) => n.remove());
+  return (c.textContent ?? "").trim().replace(/\s+/g, " ");
 }

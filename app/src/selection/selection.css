@@ -1,0 +1,96 @@
+/* ══ 선택 툴바 · 영역 캡처 · 선택 잠금 (SPEC §4.7) ══════════════════════ */
+
+/* 선택 잠금 — 드래그를 시작하면 **다른 영역**을 선택 불가로(누른 영역은 .sel-root, 다음 누름에 풀림). 시각 표시만 막는다:
+   Blink 는 none 영역 글자 위에서 놓아도 Range 끝을 거기 두는 경우가 있어(실측) 뗀 뒤 clampSelectionTo 로 자른다.
+   body 전체가 아니라 영역 요소만 끄는 이유: 상속 속성이라 바꾼 요소의 하위 트리 전체가 스타일 재계산된다. */
+body.sel-lock :is(.reader-content, .tr-col, .trscroll, .src-textlayer):not(.sel-root) { -webkit-user-select: none; user-select: none; }
+/* 지면 선택은 쪽을 넘어 이어진다 — 다른 쪽 텍스트층은 열어 두고 사이의 카드만 막는다(같은 명시도, 뒤 규칙이 이긴다). */
+body.sel-lock.sel-lock-page .src-textlayer { -webkit-user-select: text; user-select: text; }
+
+/* 본문 그림은 끌어서 채팅에 붙인다 */
+.reader-content .blk-figure img,
+.reader-content .table-image { -webkit-user-drag: element; }
+
+/* 입력창 포커스로 문서 선택이 사라져도 고른 구절을 표시 */
+::highlight(sel-keep) { background-color: color-mix(in srgb, var(--accent) 24%, transparent); }
+
+/* ── 툴바 ── */
+.seltb {
+  position: fixed; left: 0; top: 0; z-index: 92;
+  transform: translateX(-50%);
+  display: flex; align-items: center; gap: 1px;
+  padding: 3px; border-radius: 11px;
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--rule);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.18);
+  font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif;
+  -webkit-user-select: none; user-select: none;
+  animation: seltb-in 0.1s ease-out;
+}
+@keyframes seltb-in { from { opacity: 0; } to { opacity: 1; } }
+
+.seltb-btn {
+  position: relative; flex: none;
+  width: 30px; height: 30px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: 8px; background: transparent; cursor: pointer;
+  color: color-mix(in srgb, var(--fg) 80%, var(--bg));
+  transition: background-color 0.1s, color 0.1s;
+}
+.seltb-btn:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
+
+/* 툴팁(이름 · 단축키) — 선택 반대쪽으로(data-pop) */
+.seltb [data-tip]::after {
+  content: attr(data-tip);
+  position: absolute; left: 50%; bottom: calc(100% + 9px); z-index: 1;
+  width: max-content; white-space: nowrap;
+  padding: 5px 9px; border-radius: 7px;
+  background: var(--fg); color: var(--bg);
+  font-size: 0.72rem; line-height: 1.3; font-weight: 500;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+  pointer-events: none; opacity: 0; transform: translate(-50%, 3px);
+  transition: opacity 0.12s ease, transform 0.12s ease; transition-delay: 0s;
+}
+.seltb[data-pop="down"] [data-tip]::after { bottom: auto; top: calc(100% + 9px); transform: translate(-50%, -3px); }
+.seltb [data-tip]:hover::after { opacity: 1; transform: translate(-50%, 0); transition-delay: 0.3s; }
+.seltb-hl.open [data-tip]::after { display: none; }
+
+/* 형광펜: 아이콘 + 5색 세로 띠. 띠에 올리면 고를 수 있는 세로 스와치가 선택 반대쪽으로 펼쳐진다. */
+.seltb-hl { position: relative; display: inline-flex; align-items: center; }
+.seltb-strip {
+  display: flex; flex-direction: column; justify-content: center; gap: 1.5px;
+  height: 30px; padding: 0 5px 0 1px; margin-left: -4px; cursor: pointer;
+}
+.seltb-strip i { display: block; width: 4px; height: 4px; border-radius: 50%; }
+.seltb-strip .hl-yellow { background: var(--hl-yellow); }
+.seltb-strip .hl-green { background: var(--hl-green); }
+.seltb-strip .hl-blue { background: var(--hl-blue); }
+.seltb-strip .hl-pink { background: var(--hl-pink); }
+.seltb-strip .hl-purple { background: var(--hl-purple); }
+.seltb-col {
+  position: absolute; right: -4px; bottom: -4px; z-index: 2;
+  display: flex; flex-direction: column; gap: 5px; padding: 6px 5px;
+  background: var(--bg); border: 1px solid var(--rule); border-radius: 999px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+}
+.seltb[data-pop="down"] .seltb-col { bottom: auto; top: -4px; }
+.seltb-col .hl-swatch:hover { border-color: var(--fg); }
+
+.seltb-ask {
+  flex: none; width: 108px; height: 28px; margin-left: 4px; padding: 0 11px;
+  border-radius: 999px; border: 1px solid var(--rule);
+  background: color-mix(in srgb, var(--fg) 4%, transparent); color: var(--fg);
+  font: inherit; font-size: 0.8rem; outline: none;
+  transition: width 0.14s ease, border-color 0.12s, background-color 0.12s;
+}
+.seltb-ask::placeholder { color: var(--muted); }
+.seltb-ask:focus { width: 240px; border-color: var(--accent); background: var(--bg); }
+
+/* ── 영역 캡처 ── */
+body.rc-active, body.rc-active * { cursor: crosshair !important; -webkit-user-select: none !important; user-select: none !important; }
+.rc-layer { position: fixed; inset: 0; z-index: 130; cursor: crosshair; }
+.rc-rect {
+  position: fixed; pointer-events: none; border-radius: 2px;
+  border: 1.5px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}

@@ -100,10 +100,12 @@ def run_streaming(args, pdf_path: Path, doc_id: str, workdir: Path) -> int:
     meta = paper_meta.extract_paper_meta(pdf_path)
     print(f"[extract] meta: {meta}")
 
-    # 1) 전체 래스터화
-    pages = rasterize_pdf(pdf_path, workdir, dpi=args.dpi)
+    # 1) 전체 래스터화 (+ 벡터 페이지는 SVG 도)
+    pages = rasterize_pdf(pdf_path, workdir, dpi=args.dpi, vector=not args.no_vector)
     n = len(pages)
-    print(f"[extract] rasterized {n} pages @ {args.dpi}dpi")
+    n_vec = sum(1 for p in pages if p.is_vector)
+    dpis = sorted({p.dpi for p in pages})
+    print(f"[extract] rasterized {n} pages @ dpi={dpis} · 벡터 {n_vec}/{n} 쪽")
 
     # 2) pages 만 채운 document.json 초기 기록
     document = build_document.build_document(doc_id, [], pages, **meta)
@@ -143,7 +145,10 @@ def main() -> int:
     ap.add_argument("pdf", type=Path, help="입력 PDF 경로")
     ap.add_argument("output_root", type=Path, nargs="?", default=None,
                     help="출력 루트 (기본: 앱 데이터 폴더)")
-    ap.add_argument("--dpi", type=int, default=200, help="페이지 래스터 DPI (기본 200)")
+    ap.add_argument("--dpi", type=int, default=200,
+                    help="페이지 래스터 DPI **하한** (기본 200). 스캔본은 원본 해상도에 맞춰 자동 상향.")
+    ap.add_argument("--no-vector", action="store_true",
+                    help="벡터 페이지 SVG 추출을 끈다(디버그용).")
     ap.add_argument("--backend", default="auto",
                     help="MinerU 백엔드 (auto|hybrid-engine|vlm-engine|pipeline)")
     ap.add_argument("--effort", default="high", choices=["medium", "high"],
@@ -180,7 +185,7 @@ def main() -> int:
 
     if args.skip_mineru:
         # 기존 mineru 출력(단일 또는 청크들) 재사용해 파싱·빌드만 재실행
-        pages = rasterize_pdf(pdf_path, workdir, dpi=args.dpi)
+        pages = rasterize_pdf(pdf_path, workdir, dpi=args.dpi, vector=not args.no_vector)
         all_raw = []
         single = workdir / "mineru"
         chunk_dirs = sorted((workdir / "mineru").glob("chunk-*")) if single.exists() else []
