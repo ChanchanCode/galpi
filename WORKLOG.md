@@ -1,5 +1,20 @@
 # 작업 로그
 
+[2026-10-03 20:51] 0.3.0 앱 교체 · 공개 릴리스 배포
+
+한 일:
+- package.json/lockfile을 0.3.0으로 올리고 macOS arm64 앱·DMG·ZIP을 빌드했다. 번들 서명 및 빌드 코드와 패키지 코드 일치를 확인했다.
+- 실행 중인 기존 앱을 종료하고 /Applications/Galpi.app을 0.3.0으로 교체했다. 이전 0.2.0 번들은 gitignore된 out/release-0.3.0/Galpi-0.2.0-backup.app에 보존했다. 사용자 문서·설정·추출 엔진 데이터는 교체 대상에서 제외했다.
+- 커밋 261d99f와 v0.3.0 태그를 푸시했다. GitHub release workflow 37119151082 성공 후 릴리스 설명을 추가했다.
+- 공개 릴리스: https://github.com/ChanchanCode/galpi/releases/tag/v0.3.0
+
+검증:
+- 최신 릴리스 API가 v0.3.0을 가리키고, DMG/ZIP/블록맵/latest-mac.yml의 업로드 완료를 확인했다. 인증 없이 DMG 다운로드가 HTTP 200을 반환한다.
+- 배포 ZIP을 실제 다운로드·해제해 0.3.0 버전과 codesign 검증을 통과했다. 설치 앱과 공개 ZIP의 main.cjs가 일치한다. ZIP SHA-256은 5d69f6c145d9c4827a9423e6118124df3bb42da32b9b0a755d4375823069ce81이며 GitHub asset digest와 일치한다.
+
+막힌 점 / 다음:
+- 설치 앱의 화면 검증 중 macOS SecKeychainFindGenericPassword에서 앱 시작이 대기했다. OS 키체인 확인이 필요할 수 있어 사용자에게 OS 창 처리를 요청했다. 검사 프로세스/디버거 실행은 정리하고 일반 앱 경로로 다시 열었다. GUI 실행 확인은 아직 완료하지 못했다.
+
 [2026-10-03 18:59] PDF 번역 여백 · 단계별 자동 맞춤 · 앱 공통 기본값
 
 한 일:
