@@ -16,6 +16,7 @@ import { registerChatService } from "./ai/chat";
 import { docDirOf, registerSummaryService } from "./ai/summary";
 import { autoOnDeleted, autoOnExit, autoOnQueued, docIdForPdf, registerAutoPipeline } from "./ai/autoPipeline";
 import { loadLedger } from "./usage";
+import { registerPdfExport } from "./pdfExport";
 
 const isDev = !app.isPackaged;
 
@@ -495,6 +496,7 @@ app.whenReady().then(async () => {
   registerAIService();
   registerChatService();
   registerSummaryService();
+  registerPdfExport();
   registerAutoPipeline(); // 지난 실행에서 끝나지 않은 자동 번역·요약을 잠시 뒤 이어서 돈다
   registerDocProtocol();
   const win = createWindow();

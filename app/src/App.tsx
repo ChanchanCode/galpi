@@ -33,6 +33,7 @@ import { NotesLayer } from "./notes/NotesLayer";
 import { AnnotationsPanel } from "./annotations/AnnotationsPanel";
 import { useAnnotations } from "./annotations/useAnnotations";
 import { exportDocToHtml } from "./export/exportHtml";
+import { PdfExportDialog } from "./export/PdfExportDialog";
 import { buildAnnotationsMarkdown } from "./annotations/exportMd";
 import { FindBar } from "./search/FindBar";
 import { SectionRail } from "./sections/SectionRail";
@@ -91,6 +92,7 @@ export function App() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [trPop, setTrPop] = useState(false); // 번역 팝오버
+  const [pdfExportOpen, setPdfExportOpen] = useState(false);
   // AI 채팅 패널 열림. 문서를 닫아도 유지 — 첫 마운트 때 ChatPanel 이 chatLayout.open 으로 맞춘다.
   const [chatOpen, setChatOpen] = useState(false);
   const trBtnRef = useRef<HTMLButtonElement>(null);
@@ -503,7 +505,7 @@ export function App() {
           <header className="reader-bar">
             <button
               className="back-btn"
-              onClick={() => { openDocId.current = null; setDoc(null); setInspect(false); setAnnPanel(false); setSectionPanel(false); setFocusMode("off"); }}
+              onClick={() => { openDocId.current = null; setDoc(null); setPdfExportOpen(false); setInspect(false); setAnnPanel(false); setSectionPanel(false); setFocusMode("off"); }}
               data-tip="라이브러리"
               aria-label="라이브러리"
             >←</button>
@@ -576,8 +578,8 @@ export function App() {
             <span className="bar-sep" />
             <button
               className="icon-action"
-              onClick={exportHtml}
-              data-tip="내보내기"
+              onClick={() => { setTrPop(false); setPdfExportOpen(true); }}
+              data-tip="원문 + 번역 PDF 저장"
               aria-label="내보내기"
             >
               <svg {...ICO}><path d="M12 3v12" /><path d="M8 7l4-4 4 4" /><path d="M5 13v6a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-6" /></svg>
@@ -729,6 +731,11 @@ export function App() {
           <NotesLayer doc={doc} notes={ann.notes} updateNotes={ann.updateNotes} />
           <FocusMode mode={focusMode} docId={doc.doc_id} blockCount={doc.blocks.length} />
           <JumpBackButton />
+          {pdfExportOpen && <PdfExportDialog key={doc.doc_id} doc={doc} blocks={trBlocks} entries={tr.entries}
+            merge={pageMerge} typography={typography} translationWidth={tr.width}
+            extracting={openSummary?.state === "extracting" || doc.pages.length < doc.page_count}
+            onClose={() => setPdfExportOpen(false)} onSaved={() => showToast("원문 + 번역 PDF를 저장했습니다")}
+            onHtml={() => void exportHtml()} />}
         </div>
       ) : (
         <Library

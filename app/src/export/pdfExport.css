@@ -1,0 +1,44 @@
+.pdf-export-backdrop { position: fixed; inset: 0; z-index: 200; background: #0007; display: flex;
+  align-items: center; justify-content: center; padding: 24px; }
+.pdf-export-dialog { width: min(1400px, 100%); height: min(940px, 100%); display: flex; flex-direction: column;
+  background: var(--bg); color: var(--fg); border: 1px solid var(--rule); border-radius: 14px;
+  box-shadow: 0 24px 80px #0005; overflow: hidden; outline: none; }
+.pdf-export-dialog button, .pdf-export-dialog select { font: inherit; font-size: 13px; color: var(--fg);
+  background: var(--bg); border: 1px solid var(--rule); border-radius: 7px; padding: 7px 11px; cursor: pointer; }
+.pdf-export-dialog button:disabled, .pdf-export-dialog input:disabled { opacity: .45; cursor: default; }
+.pdf-export-header { display: flex; align-items: center; gap: 20px; justify-content: space-between;
+  padding: 18px 22px; border-bottom: 1px solid var(--rule); }
+.pdf-export-header div { min-width: 0; }
+.pdf-export-header h2 { margin: 0 0 5px; font-size: 17px; font-weight: 600; }
+.pdf-export-header p { margin: 0; color: var(--muted); font-size: 12px; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+.pdf-export-header button { font-size: 22px; border: 0; }
+.pdf-export-body { flex: 1; min-height: 0; display: flex; }
+.pdf-export-controls { width: 260px; flex: 0 0 260px; padding: 24px 20px; border-right: 1px solid var(--rule);
+  overflow: auto; display: flex; flex-direction: column; gap: 24px; }
+.pdf-export-controls label { display: flex; flex-direction: column; gap: 9px; font-size: 13px; font-weight: 550; }
+.pdf-export-controls output { color: var(--muted); font-size: 12px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.pdf-export-controls input[type=range] { width: 100%; accent-color: var(--accent); }
+.pdf-export-controls p { margin: 0; font-size: 12px; line-height: 1.7; }
+.pdf-export-hint { color: var(--muted); }
+.pdf-export-warning { color: #b47832; }
+.pdf-export-summary { color: var(--fg); }
+.pdf-export-fit { color: var(--accent); }
+.pdf-export-html { margin-top: auto; padding-top: 20px; }
+.pdf-export-html button { font-size: 12px; color: var(--muted); }
+.pdf-export-preview-area { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.pdf-export-preview-toolbar { display: flex; align-items: center; justify-content: center; gap: 12px;
+  padding: 10px 16px; border-bottom: 1px solid var(--rule); }
+.pdf-export-preview-toolbar span { min-width: 180px; text-align: center; font-size: 12px; color: var(--muted); }
+.pdf-export-preview-toolbar select { margin-left: auto; }
+.pdf-export-preview { flex: 1; min-height: 0; overflow: auto; background: #e8e8e6; padding: 14px 20px;
+  display: flex; justify-content: safe center; align-items: flex-start; }
+.pdf-export-preview > div { flex-shrink: 0; }
+.pdf-export-preview iframe { border: 0; display: block; background: #e8e8e6; }
+.pdf-export-footer { border-top: 1px solid var(--rule); display: flex; align-items: center; gap: 10px; padding: 14px 20px; }
+.pdf-export-footer div { flex: 1; font-size: 12px; color: var(--muted); }
+.pdf-export-footer [role=alert] { color: #c05e43; }
+.pdf-export-dialog .pdf-export-save { background: var(--accent); border-color: var(--accent); color: white; padding-inline: 20px; }
+@media (max-width: 800px) { .pdf-export-backdrop { padding: 10px; }
+  .pdf-export-controls { width: 200px; flex-basis: 200px; padding: 16px 12px; }
+  .pdf-export-preview-toolbar { flex-wrap: wrap; gap: 6px; }
+  .pdf-export-preview-toolbar span { min-width: 100px; } }

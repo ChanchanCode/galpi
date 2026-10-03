@@ -1,5 +1,6 @@
 // Preload — 렌더러에 안전한 API 표면만 노출 (contextIsolation).
 import { contextBridge, ipcRenderer, webUtils } from "electron";
+import type { PdfExportRequest, PdfExportResult } from "./pdfExport";
 import type {
   AgyAccount,
   AgyQuotaView,
@@ -269,6 +270,7 @@ const api = {
   // 자립형 HTML 내보내기 — 완성 HTML 문자열을 저장 다이얼로그로 파일에 쓰기
   exportHtml: (html: string, filename: string): Promise<{ path?: string; canceled?: boolean }> =>
     ipcRenderer.invoke("export:saveHtml", html, filename),
+  exportPdf: (request: PdfExportRequest): Promise<PdfExportResult> => ipcRenderer.invoke("export:savePdf", request),
   // ── AI 채팅 세션 (문서별 저장: docs/<id>/ai/chats/<sessionId>.json) ──────────
   chatList: (docId: string): Promise<ChatSessionMeta[]> => ipcRenderer.invoke("chat:list", docId),
   chatCreate: (docId: string, init?: { model?: string; context?: ChatContextMode; title?: string }): Promise<ChatSession> =>
