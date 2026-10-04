@@ -120,8 +120,11 @@ export function useCanvas(active: boolean, skipPanSel: string, docWidth?: number
 
   useEffect(() => {
     const el = canvasRef.current;
-    if (!el) return;
-    const measure = () => setBaseW(el.clientWidth);
+    if (!active || !el) return;
+    const measure = () => {
+      const style = getComputedStyle(el);
+      setBaseW(Math.max(0, el.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)));
+    };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);

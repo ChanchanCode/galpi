@@ -10,6 +10,7 @@ import type { TrEntry } from "./useTranslation";
 import { docScaleStyle, type Canvas } from "./useCanvas";
 import { ZoomBar } from "./ZoomBar";
 import { TrText } from "./TrText";
+import { translationFragments } from "./translationContent";
 import { TR_WIDTH_DEFAULT } from "./useTranslation";
 import {
   blockAt,
@@ -196,8 +197,8 @@ export function SourceView({ doc, cv, onDocW, showTr, blocks, entries, width, on
   const cardW = showTr ? width : 0;
   // **지면 폭은 카드 폭과 무관하다.** 카드를 넓히면 지면이 줄어드는 게 아니라
   // 전체가 캔버스보다 넓어지고, 남는 만큼은 팬으로 본다.
-  const pageW = showTr ? Math.max(240, baseW - GAP - TR_WIDTH_DEFAULT) : baseW;
-  const wantW = showTr ? pageW + GAP + cardW : baseW;
+  const pageW = showTr ? Math.max(240, baseW - GAP - TR_WIDTH_DEFAULT) : Math.max(240, baseW);
+  const wantW = showTr ? pageW + GAP + cardW : pageW;
   useEffect(() => onDocW(wantW), [wantW, onDocW]);
 
   return (
@@ -273,7 +274,7 @@ function Spread({
         style={{ aspectRatio: `${page.width_pt} / ${page.height_pt}` }}
         data-vector={page.is_vector || undefined}
       >
-        {live && <PageArt page={page} docId={docId} />}
+        {live && <PageArt key={`${docId}:${page.index}:${page.svg ?? page.image}`} page={page} docId={docId} />}
         {boxes.map((b, i) => {
           const [x0, y0, x1, y1] = b.bbox;
           return (
@@ -309,16 +310,17 @@ function Spread({
           {items.map((b) => {
             const e = entries.get(b.id);
             if (!e) return null;
+            const fragments = translationFragments(b, e);
+            if (!fragments.length) return null;
             return (
               <p
                 key={b.id}
-                className={`tr-card tr-${b.type} ${redoing.has(b.id) ? "redoing" : ""}`}
+                className={`tr-card tr-${b.type} ${b.tableNote ? "tr-table-note" : ""} ${redoing.has(b.id) ? "redoing" : ""}`}
                 data-tr-for={b.id}
                 data-level={b.type === "heading" ? Math.min(Math.max(b.level ?? 2, 1), 6) : undefined}
               >
-                {e.spans?.length ? e.spans.map((s, i) => (
-                  <span key={i} className="tr-s" data-g={`${b.id}#${i}`}><TrText text={s.ko} /> </span>
-                )) : <TrText text={e.ko} />}
+                {b.tableNote && <span className="tr-note-label">표 설명</span>}
+                {fragments.map((s, i) => <span key={i} className="tr-s" data-g={s.index == null ? undefined : `${b.id}#${s.index}`}><TrText text={s.text} /> </span>)}
               </p>
             );
           })}
@@ -355,26 +357,36 @@ function flashCard(id: string): void {
 
 // 벡터 쪽은 SVG 를 인라인해야 `fill: var(--fg)` 한 줄로 테마가 먹는다(D6).
 // <img> 로 넣으면 CSS 가 문서 경계를 못 넘어 잉크색이 항상 검정으로 남는다.
+const svgPages = new Map<string, string>();
 function PageArt({ page, docId }: { page: PageInfo; docId: string }) {
-  const [svg, setSvg] = useState<string | null>(null);
+  const url = window.paperAPI.assetUrl(docId, page.svg ?? page.image);
+  const [svg, setSvg] = useState<string | null>(() => svgPages.get(url) ?? null);
   const wantSvg = !!(page.is_vector && page.svg);
 
   useEffect(() => {
     if (!wantSvg) return;
+    const cached = svgPages.get(url);
+    if (cached) { setSvg(cached); return; }
+    setSvg(null);
     let alive = true;
-    fetch(window.paperAPI.assetUrl(docId, page.svg!))
+    fetch(url)
       .then((r) => (r.ok ? r.text() : Promise.reject(new Error(String(r.status)))))
-      .then((t) => alive && setSvg(t))
+      .then((t) => {
+        if (!/<svg\b/i.test(t)) throw new Error("Invalid SVG");
+        svgPages.set(url, t);
+        if (svgPages.size > 64) svgPages.delete(svgPages.keys().next().value!);
+        if (alive) setSvg(t);
+      })
       .catch(() => alive && setSvg(null));
     return () => {
       alive = false;
     };
-  }, [wantSvg, docId, page.svg]);
+  }, [wantSvg, url]);
 
   if (wantSvg) {
     return svg ? (
       <div className="pagesvg" dangerouslySetInnerHTML={{ __html: svg }} />
-    ) : null;
+    ) : <img src={window.paperAPI.assetUrl(docId, page.image)} alt={`p.${page.index}`} draggable={false} />;
   }
   return <img src={window.paperAPI.assetUrl(docId, page.image)} alt={`p.${page.index}`} draggable={false} />;
 }

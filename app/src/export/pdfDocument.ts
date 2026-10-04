@@ -1,4 +1,3 @@
-import katex from "katex";
 import type { PaperDocument } from "../types";
 import type { PageMerge } from "../render/pagemerge";
 import type { TrSource } from "../translate/trBlocks";
@@ -6,32 +5,13 @@ import type { TrEntry } from "../translate/useTranslation";
 import { fitSourcePage, pdfGeometry, type PdfExportSettings } from "./pdfLayout";
 import RUNTIME from "./pdfRuntime.js?raw";
 import FIT_RUNTIME from "./pdfFit.js?raw";
+import { translatedText } from "../translate/translationContent";
+import { referencedFootnotes, translationHtml } from "../translate/translationMarkup";
+import { buildFootnotes } from "../render/footnotes";
+export { translationHtml } from "../translate/translationMarkup";
 
 export function escapeHtml(text: string): string {
   return text.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
-}
-
-// Plain text remains plain text, with the same escaped-dollar convention as TrText.
-export function translationHtml(text: string): string {
-  const tokens: string[] = [];
-  let last = 0;
-  const plain = (value: string) => {
-    // Long unspaced paragraphs also need boundaries at which pagination can split.
-    for (const word of value.match(/\s+|\S+/gu) ?? []) {
-      if (word.length > 60) {
-        for (const char of Array.from(word)) tokens.push(`<span>${escapeHtml(char)}</span>`);
-      } else tokens.push(`<span>${escapeHtml(word)}</span>`);
-    }
-  };
-  for (const match of text.matchAll(/(?<!\\)\$(.+?)(?<!\\)\$/g)) {
-    plain(text.slice(last, match.index));
-    try {
-      tokens.push(`<span class="pdf-math">${katex.renderToString(match[1], { throwOnError: true, strict: false, trust: false })}</span>`);
-    } catch { tokens.push(`<span>${escapeHtml(match[0])}</span>`); }
-    last = match.index! + match[0].length;
-  }
-  plain(text.slice(last));
-  return tokens.join("");
 }
 
 export function buildPdfPreview({ doc, blocks, entries, merge, settings, fontFamily, css, token } : {
@@ -47,14 +27,27 @@ export function buildPdfPreview({ doc, blocks, entries, merge, settings, fontFam
     if (p != null && from != null && from < p && !continued.has(p)) continued.set(p, from);
   }
   const byPage = new Map<number, { html: string }[]>();
+  const notes = buildFootnotes(doc.blocks).byLabel;
+  const references = new Map<number, Set<string>>();
   for (const b of blocks) {
     const entry = entries.get(b.id);
-    const text = entry?.ko.trim() || entry?.spans?.map((s) => s.ko).join(" ").trim();
+    const text = translatedText(b, entry);
+    if (b.tableNote && !text) continue;
+    const labels = references.get(b.page) ?? new Set<string>();
+    for (const label of referencedFootnotes(text)) if (notes.has(label)) labels.add(label);
+    references.set(b.page, labels);
     const level = Math.min(6, Math.max(1, b.level ?? 2));
-    const content = text ? translationHtml(text) : '<span class="pdf-missing">[아직 번역되지 않은 문단]</span>';
+    const content = text ? translationHtml(text, (label) => notes.has(label) ? `#pdf-note-${b.page}-${label}` : undefined) : '<span class="pdf-missing">[아직 번역되지 않은 문단]</span>';
     const list = byPage.get(b.page) ?? [];
-    list.push({ html: `<p class="pdf-block ${b.type === "heading" ? `pdf-heading pdf-level-${level}` : ""}">${content}</p>` });
+    list.push({ html: `<p class="pdf-block ${b.type === "heading" ? `pdf-heading pdf-level-${level}` : b.tableNote ? "pdf-table-note" : ""}">${b.tableNote ? '<span class="pdf-note-label">표 설명</span>' : ""}${content}</p>` });
     byPage.set(b.page, list);
+  }
+  for (const [page, labels] of references) {
+    const list = byPage.get(page)!;
+    for (const label of labels) {
+      const note = notes.get(label)!;
+      list.push({ html: `<p class="pdf-block pdf-footnote" id="pdf-note-${page}-${escapeHtml(label)}"><span class="pdf-note-label">원문 각주 ${escapeHtml(label)}</span>${translationHtml(note.html)}</p>` });
+    }
   }
   const data = { token, title: doc.title ?? doc.doc_id, bodyHeight: g.bodyHeight,
     translationWidth: g.translationWidth, settings,
@@ -94,6 +87,14 @@ html, body { margin: 0; padding: 0; background: #e8e8e6; color: #202422; }
 .pdf-note { margin: 0; padding-bottom: ${settings.paragraphSpacing}em; color: #8a8276; }
 .pdf-missing { color: #8a8276; }
 .pdf-math { display: inline-block; max-width: 100%; }
+.pdf-math-display { display: block; }
+.pdf-math-display .katex-display { margin: .6em 0; }
+.pdf-table-note, .pdf-footnote { font-size: .85em; padding-left: 8pt; border-left: 1pt solid #d5dad5; }
+.pdf-footnote { margin-top: .5em; }
+.pdf-note-label { display: block; font-size: .85em; color: #747c76; padding-bottom: .3em; }
+.pdf-fn-ref a { color: #3e6650; text-decoration: none; }
+.pdf-footnote.flash { background: #edf5ef; }
+.pdf-math-raw { color: #8a8276; }
 .katex { color: inherit; } .katex .katex-mathml { display: none; }
 #pdf-measure { position: absolute; visibility: hidden; width: ${g.translationWidth}pt; }
 @media screen { html { overflow: hidden; } }

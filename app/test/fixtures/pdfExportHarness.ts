@@ -16,14 +16,15 @@ let state:any = {};
 const blocks = [
   { id:'h1', page:1, type:'heading', level:1, text:'Bilingual reading', bbox:[40,40,570,70] },
   { id:'b1', page:1, type:'paragraph', text:'A long translated paragraph to exercise pagination. The original is preserved.', bbox:[40,85,570,200] },
-  { id:'b2', page:2, type:'paragraph', text:'A paragraph with a mathematical expression and escaped dollars.', bbox:[40,80,570,150] },
+  { id:'b2', page:2, type:'paragraph', text:'A paragraph with a mathematical expression and escaped dollars. See note<sup>11</sup>.', bbox:[40,80,570,150] },
+  { id:'fn11', page:2, type:'footnote', text:'<sup>11</sup> Synthetic original footnote with $\\gamma=2$.', bbox:[40,700,570,750] },
   { id:'b3', page:3, type:'paragraph', text:'This paragraph does not have a translation yet.', bbox:[40,80,570,150] },
   { id:'b4', page:4, type:'paragraph', text:'A translation just over one sheet must stay together.', bbox:[40,80,570,600] },
 ];
 let entries:any = {
  h1:{ko:'원문과 번역을 함께 읽기'},
  b1:{ko: Array.from({length:200},(_,i)=>`문장${i+1}: 투자자의 기대와 시장 가격의 관계를 분석하고 원문에서 제시한 가정을 확인한다.`).join(' ')},
- b2:{ko:'시장 수익률과 위험의 관계는 $\\alpha + \\beta_{i} R_{m}$로 나타낸다. 원문 그림과 표는 확대해도 선명하게 유지한다. 마지막 문장까지 번역을 보존한다. <script>window.__injected=true</script> 가격은 \\$17.00이다.'},
+ b2:{ko:'시장 수익률과 위험의 관계는 $\\alpha + \\beta_{i} R_{m}$로 나타낸다. 인라인 \\(x_i^2\\), 블록 $$\\frac{a}{b}$$, 정렬 \\[\\begin{aligned}R_t&=\\alpha+\\beta R_m\\\\V_t&=\\gamma\\end{aligned}\\]을 확인한다. 마지막 문장까지 보존한다.<sup>11</sup> <script>window.__injected=true</script> 가격은 \\$17.00이다.'},
  b4:{ko:Array.from({length:38},(_,i)=>`경계줄${String(i+1).padStart(2,'0')}: 해당 쪽만 글자 크기를 조절합니다.`).join('\n')}
 };
 await fs.mkdir(dir,{recursive:true});
@@ -64,11 +65,24 @@ const replies:any = {
   if (!process.env.GALPI_PDF_REAL_DOC || !process.env.GALPI_PDF_CACHE_CONTEXT) return entries;
   const { TranslationCache } = await import('../../electron/ai/translationCache');
   const cache = await TranslationCache.open('pdf-qa');
-  return cache.lookupAll(items, JSON.parse(process.env.GALPI_PDF_CACHE_CONTEXT));
+  const result=cache.lookupAll(items, JSON.parse(process.env.GALPI_PDF_CACHE_CONTEXT));
+  for(const b of items) if (entries[b.id]?.autoFilled) result[b.id]=entries[b.id];
+  return result;
+ },
+ 'translate:doc':async(_e:any,opts:any)=>{
+  (globalThis as any).fillCalls=((globalThis as any).fillCalls??[]).concat([opts.blocks.map((b:any)=>b.id)]);
+  for(const b of opts.blocks) {
+   const entry={ko:process.env.GALPI_PDF_REAL_DOC?'[검증용 모의 추가 번역] 누락 문단을 채우는 동작을 확인합니다.':'자동 추가 번역으로 빠진 문단을 채웠습니다.',autoFilled:true};
+   entries[b.id]=entry;
+   for(const win of BrowserWindow.getAllWindows())win.webContents.send('translate:block',{docId:opts.docId,id:b.id,...entry,fromCache:false});
+  }
+  const result={docId:opts.docId,state:'done',total:opts.blocks.length,done:opts.blocks.length,cached:0,failed:0,usage:{in:0,out:0,think:0,cache_read:0,cache_write:0},est:{in:0,out:0},batches:{done:1,total:1}};
+  for(const win of BrowserWindow.getAllWindows())win.webContents.send('translate:progress',result);
+  return result;
  },
  'chat:list':()=>[], 'ai:chatModels':()=>({models:[],defaultId:'none'}),
  'summary:get':()=>null,'summary:state':()=>({running:false}),'usage:forDoc':()=>null,
- 'app:version':()=> '0.3.2', 'export:saveHtml':()=>({canceled:true}),
+ 'app:version':()=> '0.3.3', 'export:saveHtml':()=>({canceled:true}),
 };
 for (const [channel,fn] of Object.entries(replies)) ipcMain.handle(channel,fn as any);
 (dialog as any).showSaveDialog=async(...args:any[])=>{

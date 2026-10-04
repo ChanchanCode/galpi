@@ -8,6 +8,7 @@ import { fontFamilyName, useStore } from "../store/useStore";
 import { buildPdfPreview, pdfFontCss } from "./pdfDocument";
 import { DEFAULT_PDF_SETTINGS, normalizePdfSettings, pdfGeometry, type PdfExportSettings } from "./pdfLayout";
 import "./pdfExport.css";
+import { translatedText } from "../translate/translationContent";
 
 function PdfControl({ label, value, min, max, step = 1, unit, disabled, note, onChange }: {
   label: string; value: number; min: number; max: number; step?: number; unit: string;
@@ -55,6 +56,15 @@ export function PdfExportDialog({ doc, blocks, entries, merge, typography, extra
   const [error, setError] = useState<string | null>(null);
   const [persistenceError, setPersistenceError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [filling, setFilling] = useState(false);
+  const [fillError, setFillError] = useState<string | null>(null);
+  const [waitingForTranslation, setWaitingForTranslation] = useState(false);
+  const mounted = useRef(true);
+  const fillInFlight = useRef(false);
+  const fillAttempts = useRef(0);
+  const snapshotRef = useRef(snapshot);
+  snapshotRef.current = snapshot;
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [pageMap, setPageMap] = useState<number[]>([]);
   const [pageParts, setPageParts] = useState<number[]>([]);
   const [pageFontSizes, setPageFontSizes] = useState<number[]>([]);
@@ -127,13 +137,54 @@ export function PdfExportDialog({ doc, blocks, entries, merge, typography, extra
   const continuations = count - doc.pages.length;
   const currentFontSize = pageFontSizes[page - 1] ?? settings.fontSize;
   const fittedSources = new Set(pageMap.filter((_, i) => pageFontSizes[i] < settings.fontSize - 0.01)).size;
-  const missing = snapshot ? blocks.filter((b) => !snapshot.get(b.id)?.ko.trim() && !snapshot.get(b.id)?.spans?.length).length : 0;
+  const missing = snapshot ? blocks.filter((b) => !b.tableNote && !translatedText(b, snapshot.get(b.id))).length : 0;
   const g = pdfGeometry(previewSettings);
   const widthPx = g.width * 4 / 3;
   const heightPx = g.height * 4 / 3;
   const widthScale = Math.max(0.1, (viewport.width - 48) / widthPx);
   const scale = zoom === "fit" ? Math.min(1, widthScale, Math.max(0.1, (viewport.height - 48) / heightPx))
     : zoom === "width" ? widthScale : Number(zoom) / 100;
+
+  useEffect(() => window.paperAPI.onTranslateBlock((result) => {
+    if (result.docId !== doc.doc_id) return;
+    setSnapshot((prev) => {
+      if (!prev) return prev;
+      const next = new Map(prev);
+      next.set(result.id, {ko:result.ko, spans:result.spans});
+      snapshotRef.current = next;
+      return next;
+    });
+  }), [doc.doc_id]);
+  useEffect(() => window.paperAPI.onTranslateProgress((result) => {
+    if (result.docId === doc.doc_id && result.state !== "running") setWaitingForTranslation(false);
+  }), [doc.doc_id]);
+
+  useEffect(() => {
+    if (!snapshot || !missing || extracting || fillError || waitingForTranslation || fillInFlight.current || fillAttempts.current >= 3) return;
+    fillInFlight.current = true;
+    setFilling(true);
+    void (async () => {
+      // Another document translation may already be filling these blocks.
+      if (await window.paperAPI.isTranslating(doc.doc_id)) { if (mounted.current) setWaitingForTranslation(true); return; }
+      fillAttempts.current++;
+      const pending = blocks.filter((b) => !b.tableNote && !translatedText(b, snapshotRef.current?.get(b.id)));
+      const result = await window.paperAPI.translateDoc({docId:doc.doc_id,docTitle:doc.title ?? doc.doc_id,blocks:pending,force:pending.some((b)=>snapshotRef.current?.has(b.id))});
+      const cached = await window.paperAPI.cachedTranslations(doc.doc_id, blocks.map((b)=>({id:b.id,text:b.text})));
+      if (!mounted.current) return;
+      setSnapshot((prev) => {
+        const next = new Map(prev);
+        for (const [id, value] of Object.entries(cached)) next.set(id,value);
+        snapshotRef.current = next;
+        return next;
+      });
+      if (result.state === "canceled") setFillError("추가 번역을 중단했습니다. 다시 시도하면 남은 문단만 채웁니다.");
+      else if (result.error && ["auth","config","rate_limit","breaker","canceled"].includes(result.error.kind)) setFillError(`추가 번역 실패: ${result.error.message}`);
+      else if (fillAttempts.current >= 3 && pending.some((b)=>!translatedText(b,snapshotRef.current?.get(b.id)))) setFillError("일부 문단 번역에 실패했습니다. 다시 시도해 주세요.");
+    })().catch((e) => mounted.current && setFillError(`추가 번역 실패: ${String(e)}`)).finally(() => {
+      fillInFlight.current = false;
+      if (mounted.current) setFilling(false);
+    });
+  }, [doc.doc_id, missing, extracting, fillError, waitingForTranslation, filling, blocks, snapshot]);
 
   useEffect(() => {
     const el = previewRef.current;
@@ -158,6 +209,7 @@ export function PdfExportDialog({ doc, blocks, entries, merge, typography, extra
         setPage(first < 0 ? 1 : Math.min(last, first + anchor.current.part - 1) + 1);
         setError(null);
       } else if (event.data.type === "galpi:pdf-error") setError(event.data.error);
+      else if (event.data.type === "galpi:pdf-jump") setPage(event.data.page);
     };
     window.addEventListener("message", message);
     return () => window.removeEventListener("message", message);
@@ -193,7 +245,7 @@ export function PdfExportDialog({ doc, blocks, entries, merge, typography, extra
   };
   const save = async () => {
     const frameDoc = frameRef.current?.contentDocument;
-    if (!ready || !frameDoc || saving || extracting) return;
+    if (!ready || !frameDoc || saving || extracting || filling || missing) return;
     setSaving(true);
     setError(null);
     try {
@@ -260,7 +312,8 @@ export function PdfExportDialog({ doc, blocks, entries, merge, typography, extra
           <p className="pdf-export-hint">{settings.fitSmallOverflow
             ? "조금 넘치는 번역은 해당 쪽의 글자 크기로 맞춥니다. 크게 넘치는 번역은 같은 원문과 함께 다음 장에 이어집니다."
             : "긴 번역은 선택한 글자 크기 그대로 같은 원문과 함께 다음 장에 이어집니다."}</p>
-          {missing > 0 && <p className="pdf-export-warning">미번역 {missing}개 문단은 표시만 남겨 저장합니다.</p>}
+          {missing > 0 && <p className="pdf-export-warning">빠진 번역 {missing}개 문단을 추가로 채우고 있습니다.</p>}
+          {fillError && <><p role="alert" className="pdf-export-warning">{fillError}</p><button onClick={()=>{fillAttempts.current=0;setFillError(null);}}>빠진 번역 다시 시도</button></>}
           {extracting && <p className="pdf-export-warning">원문 추출이 끝나면 PDF를 저장할 수 있습니다.</p>}
           <div className="pdf-export-control-actions">
             <button onClick={() => change(DEFAULT_PDF_SETTINGS)} disabled={saving}>기본 배치로 초기화</button>
@@ -298,7 +351,7 @@ export function PdfExportDialog({ doc, blocks, entries, merge, typography, extra
       <footer className="pdf-export-footer">
         <div role={error || persistenceError ? "alert" : "status"}>{error ?? persistenceError ?? (saving ? "PDF를 저장하고 있습니다…" : "미리보기와 같은 글꼴·크기·여백으로 저장합니다. 설정은 다음에도 기억합니다.")}</div>
         <button onClick={() => void close()} disabled={saving}>닫기</button>
-        <button className="pdf-export-save" onClick={() => void save()} disabled={!ready || saving || extracting}>{saving ? "저장 중…" : "PDF 저장"}</button>
+        <button className="pdf-export-save" onClick={() => void save()} disabled={!ready || saving || extracting || filling || missing > 0}>{saving ? "저장 중…" : filling ? "번역 채우는 중…" : "PDF 저장"}</button>
       </footer>
     </div>
   </div>;

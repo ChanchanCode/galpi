@@ -12,6 +12,7 @@ import type { TrEntry } from "./useTranslation";
 import { TR_WIDTH_MAX, TR_WIDTH_MIN } from "./useTranslation";
 import { alignBlock, type Alignment } from "./align";
 import { TrText } from "./TrText";
+import { translatedText, translationFragments } from "./translationContent";
 
 const GAP = 10; // 카드 사이 최소 간격(px)
 const LINK_KEY = "tr-link"; // ::highlight(tr-link) 와 일치
@@ -50,7 +51,7 @@ export function TranslateColumn({ blocks, entries, width, onWidth, redoing, rela
   const alignCache = useRef(new Map<string, { el: HTMLElement; src: string; a: Alignment }>());
   const activeRef = useRef<HTMLElement | null>(null);
 
-  const shown = blocks.filter((b) => entries.has(b.id));
+  const shown = blocks.filter((b) => translatedText(b, entries.get(b.id)));
 
   // ── 행 정렬 (D20) ──────────────────────────────────────────────
   // 번역이 원문보다 길면 **원문이 간격을 내준다**(사용자 확정).
@@ -380,19 +381,12 @@ export function TranslateColumn({ blocks, entries, width, onWidth, redoing, rela
           return (
             <div
               key={b.id}
-              className={`tr-card tr-${b.type} ${redoing.has(b.id) ? "redoing" : ""}`}
+              className={`tr-card tr-${b.type} ${b.tableNote ? "tr-table-note" : ""} ${redoing.has(b.id) ? "redoing" : ""}`}
               data-tr-for={b.id}
               data-level={b.type === "heading" ? Math.min(Math.max(b.level ?? 2, 1), 6) : undefined}
             >
-              {e.spans?.length ? (
-                e.spans.map((s, i) => (
-                  <span key={i} className="tr-s" data-g={`${b.id}#${i}`}>
-                    <TrText text={s.ko} />{" "}
-                  </span>
-                ))
-              ) : (
-                <span className="tr-plain"><TrText text={e.ko} /></span>
-              )}
+              {b.tableNote && <span className="tr-note-label">표 설명</span>}
+              {translationFragments(b, e).map((s, i) => <span key={i} className="tr-s" data-g={s.index == null ? undefined : `${b.id}#${s.index}`}><TrText text={s.text} /> </span>)}
             </div>
           );
         })}

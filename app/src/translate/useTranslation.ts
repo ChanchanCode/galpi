@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TranslatePlan, TranslateProgress, TrCacheEntry, TrSpan } from "../../electron/preload";
 import type { TrSource } from "./trBlocks";
 import { viewportFirst } from "./trBlocks";
+import { translatedText } from "./translationContent";
 
 export type TrView = "reflow" | "source";
 
@@ -46,12 +47,18 @@ export function useTranslation(docId: string | null, docTitle: string, blocks: T
   const [running, setRunning] = useState(false);
   const [redoing, setRedoing] = useState<Set<string>>(new Set());
   const [width, setWidthState] = useState(TR_WIDTH_DEFAULT);
+  const [cacheReady, setCacheReady] = useState(false);
+  const fillState = useRef({docId,attempts:0,busy:false});
+  const currentDoc = useRef(docId);
+  currentDoc.current = docId;
   const blocksRef = useRef(blocks);
   blocksRef.current = blocks;
   const widthTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 문서가 바뀌면 전부 리셋. 번역 표시는 문서에 묶인다.
   useEffect(() => {
+    setCacheReady(false);
+    fillState.current = {docId,attempts:0,busy:false};
     setEntries(new Map());
     setProgress(null);
     setPlan(null);
@@ -113,6 +120,7 @@ export function useTranslation(docId: string | null, docTitle: string, blocks: T
         blocks.map((b) => ({ id: b.id, text: b.text })),
       )) as Record<string, TrCacheEntry>;
       if (!alive) return;
+      setCacheReady(true);
       setEntries((prev) => {
         let next: Map<string, TrEntry> | null = null;
         for (const [id, e] of Object.entries(cached)) {
@@ -161,6 +169,25 @@ export function useTranslation(docId: string | null, docTitle: string, blocks: T
     },
     [docId, docTitle, refreshPlan],
   );
+
+  useEffect(() => {
+    const state = fillState.current;
+    if (!on || !docId || !cacheReady || running || state.busy || state.attempts >= 3) return;
+    const pending = blocks.filter((b)=>!b.tableNote && !translatedText(b,entries.get(b.id)));
+    if (!pending.length) return;
+    state.busy = true;
+    state.attempts++;
+    setRunning(true);
+    void window.paperAPI.translateDoc({docId,docTitle,blocks:pending,force:pending.some((b)=>entries.has(b.id))})
+      .then((result)=>{
+        if (currentDoc.current !== docId) return;
+        setProgress(result);
+        if (result.state === "canceled" || (result.error && ["auth","rate_limit","breaker"].includes(result.error.kind))) state.attempts=3;
+      }).catch(()=>{state.attempts=3;}).finally(()=>{
+        state.busy=false;
+        if (currentDoc.current===docId) setRunning(false);
+      });
+  }, [on,docId,docTitle,cacheReady,running,blocks,entries]);
 
   const cancel = useCallback(() => {
     if (!docId) return;

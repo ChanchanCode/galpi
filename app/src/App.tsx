@@ -601,7 +601,7 @@ export function App() {
               <FootnoteContext.Provider value={footnotes?.byLabel ?? EMPTY_FOOTNOTES}>
                 {/* 번역 컬럼은 .reader-content **밖**이다(D19) — 안에 넣으면 형광펜·검색·
                     내보내기 등 .reader-content 를 잡는 모듈 10곳이 한국어를 본문으로 먹는다. */}
-                <div className="rd-canvas" ref={rd.canvasRef} onPointerDown={rd.onPointerDown}>
+                <div className="rd-canvas" data-view={tr.view} ref={rd.canvasRef} onPointerDown={rd.onPointerDown}>
                 <div className="src-pan" ref={rd.panRef}>
                 <div className="src-shift" ref={rd.shiftRef}>
                 <div className="src-doc" style={{ width: Math.max(rd.baseW, stageW) || undefined, ...docScaleStyle(rd.z) }}>
@@ -663,6 +663,7 @@ export function App() {
               {/* 보기 B — 왼쪽만 원본 지면으로 갈린다(D9). .reader-content 는 CSS 로 숨길 뿐
                   언마운트하지 않는다 — 형광펜·메모·검색이 잡고 있는 컨테이너다. */}
               {tr.view === "source" && (
+                <FootnoteContext.Provider value={footnotes?.byLabel ?? EMPTY_FOOTNOTES}>
                 <SourceView
                   doc={doc}
                   cv={srcCv}
@@ -675,6 +676,7 @@ export function App() {
                   redoing={tr.redoing}
                   merge={pageMerge}
                 />
+                </FootnoteContext.Provider>
               )}
             </main>
             <SectionRail

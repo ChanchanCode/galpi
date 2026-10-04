@@ -14,6 +14,7 @@ const { _electron } = await import(process.env.GALPI_PLAYWRIGHT_MODULE
 const appRoot = path.resolve(import.meta.dirname, '..');
 const qaRoot = process.env.GALPI_PDF_QA_ROOT ?? await fs.mkdtemp(path.join(os.tmpdir(), 'galpi-pdf-test-'));
 await fs.mkdir(qaRoot, { recursive: true });
+await fs.rm(path.join(qaRoot, 'data/Galpi/settings.json'), {force:true});
 await build({ entryPoints: [path.join(appRoot, 'test/fixtures/pdfExportHarness.ts')], bundle: true,
   platform: 'node', format: 'cjs', outfile: path.join(appRoot, 'dist-test/pdfExportHarness.cjs'), external: ['electron'] });
 const options = { executablePath: require('electron'), args: [path.join(appRoot, 'dist-test/pdfExportHarness.cjs')],
@@ -54,13 +55,66 @@ try {
     ? JSON.parse(await fs.readFile(path.join(process.env.GALPI_PDF_REAL_DOC, 'document.json'), 'utf8')).title
     : '원문 + 번역 저장 검증';
   await page.getByText(title, {exact:true}).click();
+  if (!process.env.GALPI_PDF_REAL_DOC) {
+    await page.getByRole('button',{name:'번역',exact:true}).click();
+    const ref = page.locator('.tr-col [data-tr-for="b2"] .fn-ref');
+    await ref.evaluate((el)=>el.click());
+    await page.getByRole('dialog',{name:'원문 각주 11',exact:true}).waitFor();
+    assert.ok((await page.locator('.fn-pop').innerText()).includes('Synthetic original footnote'));
+    assert.equal(await page.locator('.fn-pop .katex').count(),1);
+    assert.equal(await page.locator('.rd-canvas .fn-pop').count(),0);
+    await page.keyboard.press('Escape');
+    await page.getByRole('button',{name:'원본 모드',exact:true}).click();
+    await page.waitForFunction(()=>{
+      const sc=document.querySelector('.reader-scroll').getBoundingClientRect();
+      const image=document.querySelector('.src-canvas .spread[data-page="1"] svg, .src-canvas .spread[data-page="1"] img');
+      if (!image || (image.tagName.toLowerCase()==='img' && !image.naturalWidth)) return false;
+      const rect=image.getBoundingClientRect();
+      return rect.top<sc.bottom && rect.bottom>sc.top && getComputedStyle(document.querySelector('.rd-canvas')).display==='none';
+    });
+    await page.getByRole('button',{name:'원본 모드',exact:true}).click();
+    await page.getByRole('button',{name:'원본 모드',exact:true}).click();
+    await page.waitForFunction(()=>getComputedStyle(document.querySelector('.rd-canvas')).display==='none'
+      && !!document.querySelector('.src-canvas .spread[data-page="1"] svg, .src-canvas .spread[data-page="1"] img'));
+    for (let i=0;i<2;i++) {
+      await page.getByRole('button',{name:'번역',exact:true}).click();
+      await page.getByRole('button',{name:'원본 모드',exact:true}).click();
+      await page.getByRole('button',{name:'원본 모드',exact:true}).click();
+      await page.waitForFunction(()=>{
+        const art=document.querySelector('.src-canvas .pagehalf svg, .src-canvas .pagehalf img');
+        return art && art.getBoundingClientRect().width>100 && getComputedStyle(document.querySelector('.rd-canvas')).display==='none';
+      });
+    }
+    await page.locator('.src-canvas [data-tr-for="b2"] .fn-ref').evaluate((el)=>el.click());
+    await page.getByRole('dialog',{name:'원문 각주 11',exact:true}).waitFor();
+    await page.keyboard.press('Escape');
+  }
   await page.getByRole('button', {name:'내보내기',exact:true}).click();
   await waitReady(page);
+  metrics.fillCalls = await app.evaluate(()=>globalThis.fillCalls??[]);
+  if (!process.env.GALPI_PDF_REAL_DOC) assert.deepEqual(metrics.fillCalls,[['b3']]);
   const frame = page.frameLocator('iframe[title="PDF 저장 미리보기"]');
   await page.getByRole('button', {name:'기본 배치로 초기화',exact:true}).click();
   await waitReady(page);
   metrics.base = await checkLayout(frame, {font:11.5,line:1.7,top:6,bottom:6,horizontal:4});
   metrics.basePages = await frame.locator('.pdf-sheet').count();
+  const printedText=(await frame.locator('.pdf-flow').allTextContents()).join('');
+  assert.ok(!printedText.includes('<sup>') && !printedText.includes('<sub>'));
+  assert.ok(!printedText.includes('[아직 번역되지 않은 문단]'));
+  if (!process.env.GALPI_PDF_REAL_DOC) {
+    assert.equal(await frame.locator('.pdf-sheet[data-source-page="2"] .pdf-math').count(),5);
+    assert.equal(await frame.locator('.pdf-sheet[data-source-page="2"] .pdf-math-display').count(),2);
+    assert.equal(await frame.locator('.pdf-math-raw').count(),0);
+    assert.equal(await frame.locator('#pdf-note-2-11').count(),1);
+    await frame.locator('.pdf-fn-ref a').click();
+    assert.equal(await frame.locator('#pdf-note-2-11.flash').count(),1);
+  } else if (title==='Do ETFs Increase Volatility?') {
+    assert.equal(await frame.locator('.pdf-sheet[data-source-page="12"] .pdf-table-note').count(),0);
+    const note=await frame.locator('.pdf-sheet[data-source-page="24"] .pdf-table-note').innerText();
+    assert.ok(note.includes('본 표는 ETF 보유 지분율'));
+    assert.ok(!note.includes('themeananddividing') && !note.includes('Thetablereportsestimates'));
+    assert.equal(await frame.locator('#pdf-note-18-11').count(),1);
+  }
   await page.screenshot({path:path.join(qaRoot,'preview-default.png')});
   if (!process.env.GALPI_PDF_REAL_DOC) {
     const text = (await frame.locator('.pdf-flow').allTextContents()).join('');
@@ -115,7 +169,7 @@ try {
   await checkLayout(frame, {font:12.5,line:2.2,top:14,bottom:10,horizontal:7});
   if (!process.env.GALPI_PDF_REAL_DOC) {
     await page.getByLabel('PDF 용지', {exact:true}).selectOption('a4');
-    await page.getByLabel('번역 칸 폭', {exact:true}).fill('25');
+    await page.getByLabel('번역 칸 폭', {exact:true}).fill('35');
     await page.getByLabel('번역 좌우 여백', {exact:true}).fill('20');
     await waitReady(page);
     await checkLayout(frame, {font:12.5,line:2.2,top:14,bottom:10,horizontal:20});

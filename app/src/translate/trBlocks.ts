@@ -3,6 +3,7 @@
 import type { Block, PaperDocument } from "../types";
 import { isSpacedLabel } from "../render/frontmatter";
 import type { PageMerge } from "../render/pagemerge";
+import { isBrokenTableText } from "./translationContent";
 
 export type TrKind = "para" | "title" | "footnote" | "list" | "formula" | "table" | "other";
 
@@ -13,6 +14,7 @@ export interface TrSource {
   page: number;
   type: Block["type"];
   level?: number; // heading 전용 — 번역 카드도 원문과 같은 위계로 그린다
+  tableNote?: boolean; // Damaged rotated table description; show only a usable translation.
 }
 
 // 번역하는 타입. 빠진 것들의 이유:
@@ -47,7 +49,9 @@ export function collectTrBlocks(doc: PaperDocument, h: HiddenSets): TrSource[] {
     // **페이지를 넘어 합쳐진 본문**을 넘긴다(§5.1). 조각째 주면 모델이 뒷부분을 지어낸다.
     const text = (h.merge.textOverride.get(b.id) ?? b.text ?? "").trim();
     if (text.length < MIN_CHARS) continue;
-    out.push({ id: b.id, text, kind: KIND[b.type] ?? "other", page: b.page, type: b.type, level: b.level });
+    const tableNote = isBrokenTableText(b, doc);
+    if (tableNote && text.replace(/<[^>]*>/g, "").replace(/\s+/g, "").length < 40) continue;
+    out.push({ id: b.id, text, kind: KIND[b.type] ?? "other", page: b.page, type: b.type, level: b.level, tableNote });
   }
   return out;
 }

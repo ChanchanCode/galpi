@@ -779,6 +779,7 @@ body[data-hl-dim="on"] .reader-content ::selection { background: transparent; }
 .fn-ref::after { content: "]"; }
 .fn-ref:hover, .fn-ref.on { background: color-mix(in srgb, var(--accent) 18%, transparent); }
 .fn-pop {
+  max-height: min(60vh, 420px); overflow: auto;
   position: fixed; z-index: 60; width: 360px; max-width: 84vw;
   background: var(--bg); color: var(--fg);
   border: 1px solid var(--rule); border-radius: 10px; padding: 10px 14px;
@@ -1055,9 +1056,14 @@ body.src-panning, body.src-panning * { cursor: grabbing !important; user-select:
 
 /* 보기 A 캔버스 — 보기 B 와 같은 팬/줌을 쓰되 여백은 본문이 갖는다. */
 .rd-canvas { position: relative; overflow: hidden; }
+.rd-canvas[data-view="source"] { display: none; }
 
 /* 번역 카드 안의 인라인 수식 — 본문 수식 크기와 따로 논다(카드 글자에 맞춘다). */
 .tr-math .katex { font-size: 1em; }
+.tr-math-display { display: block; max-width: 100%; overflow-x: auto; }
+.tr-math-display .katex-display { margin: .6em 0; }
+.tr-card.tr-table-note { font-size: .9em; padding-left: .7em; border-left: 2px solid var(--rule); }
+.tr-note-label { display: block; font-size: .85em; color: var(--muted); margin-bottom: .3em; }
 .tr-math-raw { color: var(--muted); }
 
 /* 번역 패널 스크롤바 — 본문보다 연하고 얇게. */

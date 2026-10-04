@@ -19,6 +19,22 @@
     const pageFontSizes = [];
     let fontSize = settings.fontSize;
     let linePx = fontSize * 4 / 3 * settings.lineHeight;
+    const fitMathWidth = (root) => {
+      for (const math of root.querySelectorAll(".pdf-math")) {
+        math.style.fontSize = "";
+        const glyph = math.querySelector(".katex-html");
+        const block = math.closest(".pdf-block");
+        if (!glyph || !block) continue;
+        const style = getComputedStyle(block);
+        const available = block.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - 1;
+        const width = glyph.getBoundingClientRect().width;
+        const basePt = parseFloat(getComputedStyle(math).fontSize) * .75;
+        if (width > available && width > 0) {
+          const scale = Math.max(Math.min(1, 8 / basePt), available / width);
+          math.style.fontSize = `${scale}em`;
+        }
+      }
+    };
     const fits = () => column.getBoundingClientRect().height <= contentHeight - 0.5
       && column.scrollWidth <= column.clientWidth + 1;
     const pageNotes = (page) => {
@@ -72,6 +88,7 @@
       measure.innerHTML = notes + page.blocks.map((b) => b.html).join("");
       fontSize = choosePdfPageFont(settings, (candidate) => {
         measure.style.fontSize = `${candidate}pt`;
+        fitMathWidth(measure);
         return measure.getBoundingClientRect().height <= contentHeight - 0.5
           && measure.scrollWidth <= measure.clientWidth + 1;
       });
@@ -81,6 +98,7 @@
       column.innerHTML = notes;
       for (let b = 0; b < page.blocks.length; b++) {
         measure.innerHTML = page.blocks[b].html;
+        fitMathWidth(measure);
         const paragraph = measure.firstElementChild;
         column.append(paragraph);
         // Keep a heading with at least the first two lines of the next paragraph.
@@ -103,7 +121,7 @@
         let offset = 0;
         while (offset < nodes.length) {
           const fragment = paragraph.cloneNode(false);
-          if (offset) fragment.classList.add("pdf-paragraph-continued");
+          if (offset) { fragment.classList.add("pdf-paragraph-continued"); fragment.removeAttribute("id"); }
           column.append(fragment);
           let lo = 0;
           let hi = nodes.length - offset;
@@ -141,6 +159,17 @@
       }
     }
     measure.remove();
+    document.addEventListener("click", (event) => {
+      const link = event.target instanceof Element ? event.target.closest("a[data-pdf-note]") : null;
+      if (!link) return;
+      event.preventDefault();
+      const target = document.getElementById(link.getAttribute("href").slice(1));
+      const sheet = target?.closest(".pdf-sheet");
+      if (!sheet) return;
+      parent.postMessage({ type: "galpi:pdf-jump", token: data.token, page: Array.from(output.children).indexOf(sheet) + 1 }, "*");
+      target.classList.add("flash");
+      setTimeout(() => target.classList.remove("flash"), 1800);
+    });
     document.querySelectorAll(".pdf-sheet footer").forEach((footer, i) => {
       footer.textContent = `${i + 1} / ${pageMap.length} · 원문 ${pageMap[i]}쪽${pageParts[i] > 1 ? ` · 번역 이어짐 ${pageParts[i] - 1}` : ""}`;
     });
