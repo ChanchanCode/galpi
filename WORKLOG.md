@@ -1,5 +1,21 @@
 # 작업 로그
 
+[2026-10-04 13:54] v0.3.2 공개 배포 · 이 맥북의 앱 교체 및 화면 확인
+
+한 일:
+- e1b9675 커밋과 v0.3.2 태그를 푸시했다. GitHub release workflow 37177794695 성공 및 공개 DMG·ZIP·blockmap·latest-mac.yml 업로드를 확인했다. 릴리스 설명을 추가했다.
+- 공개 ZIP을 인증 없이 실제 다운로드했다. SHA-256 `8b5c6003606463bb5bd69bbb159df68f4426189ba444fa962df8fe49946a3d9d`가 GitHub asset digest와 일치한다. 압축 해제 후 버전 0.3.2·codesign을 검증했고, main.cjs가 테스트한 소스 빌드와 일치한다.
+- 기존 앱을 정상 종료하고 /Applications/Galpi.app을 이 공개 ZIP의 앱으로 교체했다. 설치 app.asar와 공개 ZIP app.asar가 일치한다. 기존 0.3.1 앱은 out/release-0.3.2/Galpi-0.3.1-backup.app에 보관했다.
+- 설치 앱을 실행해 쪽별 작은 초과 맞춤이 켜져 있는 것과 실제 pt 표시를 확인했다. 네이티브 저장 다이얼로그의 기본 파일명이 `Ben-David et al. (2018) - Do ETFs Increase Volatility - 원문+번역.pdf`임을 확인하고 저장은 취소했다. 새 PDF 미리보기는 열어두었다.
+
+검증:
+- GitHub latest release와 latest-mac.yml 모두 0.3.2를 가리킨다. 공개 DMG 다운로드가 HTTP 200을 반환한다.
+- 원문 PDF·번역 캐시를 수정하지 않았으며, 기존 읽기/계정 설정을 보존했다. PDF 설정의 fitSmallOverflow만 새 기본값을 사용한다.
+
+결과:
+- 공개 릴리스: https://github.com/ChanchanCode/galpi/releases/tag/v0.3.2
+- 배포·설치·실행 화면 검증 완료. 복구본 및 해시/워크플로 증거는 out/release-0.3.2에 보관했다.
+
 [2026-10-04 13:41] 0.3.2 — 살짝 넘치는 쪽의 글자만 맞춤 · 저자/연도/제목 파일명
 
 한 일:
