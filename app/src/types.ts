@@ -45,6 +45,7 @@ export interface PaperDocument {
   title: string | null;
   authors?: string | null;
   journal?: string | null;
+  year?: number | null;
   source_pdf: string;
   page_count: number;
   pages: PageInfo[];

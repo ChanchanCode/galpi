@@ -9,6 +9,9 @@ export async function overlaySourcePdf(translation: Uint8Array, source: Uint8Arr
   if (output.getPageCount() !== pageMap.length) throw new Error("미리보기와 PDF의 페이지 수가 다릅니다. 다시 미리보기를 열어 주세요.");
   const embedded = new Map<number, Awaited<ReturnType<PDFDocument["embedPage"]>>>();
   const g = pdfGeometry(settings);
+  // Chromium rounds paper dimensions to hundredths of an inch. Keep the saved
+  // MediaBox at the exact shared geometry; this trims only the unused edge.
+  for (const page of output.getPages()) page.setSize(g.width, g.height);
   for (let i = 0; i < pageMap.length; i++) {
     const index = pageMap[i] - 1;
     if (!Number.isInteger(index) || index < 0 || index >= original.getPageCount()) throw new Error("원문 페이지 번호가 올바르지 않습니다.");

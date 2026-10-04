@@ -5,6 +5,8 @@ import path from "node:path";
 import { overlaySourcePdf } from "./pdfCompose";
 import { docsRoot } from "./paths";
 import { normalizePdfSettings, pdfGeometry, type PdfExportSettings } from "../src/export/pdfLayout";
+import { bilingualPdfFilename, type CoverEvidence } from "../src/export/pdfFilename";
+import type { PaperDocument } from "../src/types";
 
 export interface PdfExportRequest {
   docId: string;
@@ -19,6 +21,26 @@ function validateDocId(docId: unknown): asserts docId is string {
   if (typeof docId !== "string" || !docId || path.basename(docId) !== docId || docId === "." || docId === "..") {
     throw new Error("문서 ID가 올바르지 않습니다.");
   }
+}
+
+async function filenameEvidence(doc: PaperDocument, docDir: string): Promise<CoverEvidence> {
+  let lines = doc.blocks.filter((b) => b.page === doc.pages[0]?.index && b.text).map((b) => b.text!);
+  const text = doc.pages[0]?.text;
+  if (text) {
+    const fullPath = path.resolve(docDir, text);
+    if (fullPath.startsWith(docDir + path.sep)) {
+      try {
+        const page = JSON.parse(await fs.readFile(fullPath, "utf8"));
+        if (Array.isArray(page.lines)) lines = page.lines.map((l: { t?: string }) => l.t).filter((l: unknown): l is string => typeof l === "string");
+      } catch { /* A missing original text layer falls back to extracted blocks. */ }
+    }
+  }
+  const normalize = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+  const title = normalize(doc.title ?? "");
+  const titleStart = lines.findIndex((line) => normalize(line).length >= 12 && title.includes(normalize(line)));
+  const abstract = lines.findIndex((line) => /^(?:abstract|초록)\s*[:：]?$/i.test(line.trim()));
+  return { headerLines: titleStart >= 0 ? lines.slice(0, titleStart) : [],
+    coverLines: abstract >= 0 ? lines.slice(0, abstract) : lines.slice(0, 20), pageText: lines.join("\n") };
 }
 
 // The caller supplies a fully paginated, script-free snapshot of the preview.
@@ -69,9 +91,10 @@ export function registerPdfExport() {
     try {
       validateDocId(request?.docId);
       const win = BrowserWindow.fromWebContents(event.sender);
-      const doc = JSON.parse(await fs.readFile(path.join(docsRoot(), request.docId, "document.json"), "utf8"));
-      const name = String(doc.title ?? request.docId).replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").slice(0, 100);
-      const options = { title: "원문 + 번역 PDF 저장", defaultPath: path.join(app.getPath("downloads"), `${name} - 원문+번역.pdf`),
+      const docDir = path.join(docsRoot(), request.docId);
+      const doc: PaperDocument = JSON.parse(await fs.readFile(path.join(docDir, "document.json"), "utf8"));
+      const name = bilingualPdfFilename(doc, await filenameEvidence(doc, docDir));
+      const options = { title: "원문 + 번역 PDF 저장", defaultPath: path.join(app.getPath("downloads"), name),
         filters: [{ name: "PDF", extensions: ["pdf"] }] };
       const res = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options);
       if (res.canceled || !res.filePath) return { canceled: true };
