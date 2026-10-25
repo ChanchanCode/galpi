@@ -179,10 +179,19 @@ export function useTranslation(docId: string | null, docTitle: string, blocks: T
     state.attempts++;
     setRunning(true);
     void window.paperAPI.translateDoc({docId,docTitle,blocks:pending,force:pending.some((b)=>entries.has(b.id))})
-      .then((result)=>{
+      .then(async(result)=>{
         if (currentDoc.current !== docId) return;
         setProgress(result);
         if (result.state === "canceled" || (result.error && ["auth","rate_limit","breaker"].includes(result.error.kind))) state.attempts=3;
+        // The IPC result can arrive before the last block event. Reconcile persisted
+        // results before releasing the fill lock so that note is not requested twice.
+        const cached = await window.paperAPI.cachedTranslations(docId, pending);
+        if (currentDoc.current !== docId) return;
+        setEntries((prev) => {
+          const next = new Map(prev);
+          for (const [id, value] of Object.entries(cached)) next.set(id, value);
+          return next;
+        });
       }).catch(()=>{state.attempts=3;}).finally(()=>{
         state.busy=false;
         if (currentDoc.current===docId) setRunning(false);

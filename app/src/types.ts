@@ -38,6 +38,8 @@ export interface Block {
   html?: string; // table
   image?: string; // figure / 폴백 이미지 (assets/ 상대)
   needs_review?: boolean;
+  // Recovered from the original page text layer, including continued notes.
+  footnote_label?: string;
 }
 
 export interface PaperDocument {

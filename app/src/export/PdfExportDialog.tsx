@@ -177,9 +177,9 @@ export function PdfExportDialog({ doc, blocks, entries, merge, typography, extra
         snapshotRef.current = next;
         return next;
       });
-      if (result.state === "canceled") setFillError("추가 번역을 중단했습니다. 다시 시도하면 남은 문단만 채웁니다.");
+      if (result.state === "canceled") setFillError("추가 번역을 중단했습니다. 다시 시도하면 남은 본문과 각주만 채웁니다.");
       else if (result.error && ["auth","config","rate_limit","breaker","canceled"].includes(result.error.kind)) setFillError(`추가 번역 실패: ${result.error.message}`);
-      else if (fillAttempts.current >= 3 && pending.some((b)=>!translatedText(b,snapshotRef.current?.get(b.id)))) setFillError("일부 문단 번역에 실패했습니다. 다시 시도해 주세요.");
+      else if (fillAttempts.current >= 3 && pending.some((b)=>!translatedText(b,snapshotRef.current?.get(b.id)))) setFillError("일부 본문이나 각주를 번역하지 못했습니다. 다시 시도해 주세요.");
     })().catch((e) => mounted.current && setFillError(`추가 번역 실패: ${String(e)}`)).finally(() => {
       fillInFlight.current = false;
       if (mounted.current) setFilling(false);
@@ -312,7 +312,7 @@ export function PdfExportDialog({ doc, blocks, entries, merge, typography, extra
           <p className="pdf-export-hint">{settings.fitSmallOverflow
             ? "조금 넘치는 번역은 해당 쪽의 글자 크기로 맞춥니다. 크게 넘치는 번역은 같은 원문과 함께 다음 장에 이어집니다."
             : "긴 번역은 선택한 글자 크기 그대로 같은 원문과 함께 다음 장에 이어집니다."}</p>
-          {missing > 0 && <p className="pdf-export-warning">빠진 번역 {missing}개 문단을 추가로 채우고 있습니다.</p>}
+          {missing > 0 && <p className="pdf-export-warning">빠진 본문·각주 번역 {missing}개를 추가로 채우고 있습니다.</p>}
           {fillError && <><p role="alert" className="pdf-export-warning">{fillError}</p><button onClick={()=>{fillAttempts.current=0;setFillError(null);}}>빠진 번역 다시 시도</button></>}
           {extracting && <p className="pdf-export-warning">원문 추출이 끝나면 PDF를 저장할 수 있습니다.</p>}
           <div className="pdf-export-control-actions">

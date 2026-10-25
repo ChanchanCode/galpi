@@ -1,4 +1,4 @@
-// PDF 추가 시 자동 파이프라인: 추출 완료 → 문서 번역 → 핵심 요약. 한 번에 한 문서, 대기열.
+// PDF 추가 시 자동 파이프라인: 추출 완료 → 문서 번역 → PDF 저장 → 핵심 요약. 문서별 대기열.
 //
 // · docId 는 추출 전에 main 이 미리 계산한다(extract.py make_doc_id 와 같은 규칙) — 라이브러리 카드와 잡을 잇기 위해서다.
 // · 번역 블록은 App 의 useMemo 와 **같은 함수·같은 순서**로 고른다. 어긋나면 번역 캐시 키(원문 텍스트)가 달라져
@@ -11,13 +11,15 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { PaperDocument } from "../../src/types";
 import { collectTrBlocks } from "../../src/translate/trBlocks";
+import { translatedText } from "../../src/translate/translationContent";
+import { cancelAutomaticPdf, saveAutomaticPdf } from "../pdfExport";
 import { appSupportDir } from "../paths";
-import { atomicWriteJson, readSettings, saveSettings, type Settings } from "../settings";
+import { atomicWriteJson, autoOptions, readSettings, saveSettings, type AutoOptions } from "../settings";
 import type { AutoJobStatus } from "./chatTypes";
 import { hiddenSets, loadDocumentCached } from "./paperContext";
 import { PRIORITY_BATCH } from "./queue";
-import { aiExt, docDirOf, generateSummary } from "./summary";
-import { cancelDocTranslation, isTranslating, translateDocument, type TrBlock } from "./translateDoc";
+import { docDirOf, generateSummary } from "./summary";
+import { cachedTranslations, cancelDocTranslation, isTranslating, translateDocument, waitForDocTranslation } from "./translateDoc";
 
 // ── docId (pipeline/extract.py make_doc_id 와 바이트 단위 동일) ─────────────
 //   h = sha1(파일)[:8]; stem = "".join(c if c.isalnum() else "-" for c in Path.stem).strip("-").lower(); f"{stem[:40]}-{h}"
@@ -57,20 +59,19 @@ export async function docIdForPdf(pdfPath: string): Promise<string> {
 }
 
 // ── 설정 ────────────────────────────────────────────────────────────
-export async function getAuto(): Promise<{ translate: boolean; summary: boolean }> {
-  const a = aiExt(await readSettings()).auto ?? {};
-  return { translate: a.translate !== false, summary: a.summary !== false };
+export async function getAuto(): Promise<AutoOptions> {
+  return autoOptions((await readSettings()).ai?.auto);
 }
 
 // ── 번역 블록 (App.tsx useMemo: footnotes → frontMatter → pageMerge → collectTrBlocks) ─────
-export function autoTrBlocks(doc: PaperDocument): TrBlock[] {
+export function autoTrBlocks(doc: PaperDocument) {
   const { footnotes, frontMatter, merge } = hiddenSets(doc.blocks);
   return collectTrBlocks(doc, {
     pulled: footnotes.pulled,
     frontIds: frontMatter.ids,
     frontStartId: frontMatter.startId,
     merge,
-  }).map((b) => ({ id: b.id, text: b.text, kind: b.kind, page: b.page }));
+  });
 }
 
 // ── 상태 ────────────────────────────────────────────────────────────
@@ -105,7 +106,7 @@ function broadcastThrottled(): void {
 let writeChain: Promise<unknown> = Promise.resolve();
 function persist(): void {
   const list = [...jobs.values()]
-    .filter((j) => j.stage === "extracting" || j.stage === "translate" || j.stage === "summary")
+    .filter((j) => j.stage === "extracting" || j.stage === "translate" || j.stage === "pdf" || j.stage === "summary")
     .map((j) => ({ docId: j.docId, stage: j.stage }));
   writeChain = writeChain
     .then(() => atomicWriteJson(jobsFile(), { v: 1, jobs: list }))
@@ -144,7 +145,7 @@ export function autoOnQueued(docId: string): void {
   void getAuto()
     .then((a) => {
       if (!expecting.has(docId)) return; // 그새 끝났다
-      if (!a.translate && !a.summary) return;
+      if (!a.translate && !a.summary && !a.pdf) return;
       if (current === docId || queue.includes(docId)) return;
       setJob(docId, { stage: "extracting" });
     })
@@ -157,12 +158,12 @@ export function autoOnExit(docId: string, code: number | null): void {
   void (async () => {
     const state = await readStatusState(docId);
     const a = await getAuto();
-    if (code !== 0 || state !== "done" || (!a.translate && !a.summary)) {
+    if (code !== 0 || state !== "done" || (!a.translate && !a.summary && !a.pdf)) {
       // 추출 실패는 라이브러리 카드가 이미 status.json 으로 보여 준다 — 여기서 오류 점을 겹쳐 띄우지 않는다.
       dropJob(docId);
       return;
     }
-    enqueue(docId, a.translate ? "translate" : "summary");
+    enqueue(docId, a.translate || a.pdf ? "translate" : "summary");
   })().catch((err) => console.warn("[auto] 종료 처리 실패:", err));
 }
 
@@ -174,6 +175,7 @@ export function autoOnDeleted(docId: string): void {
   if (current === docId) {
     aborted.add(docId);
     cancelDocTranslation(docId);
+    cancelAutomaticPdf(docId);
   }
   dropJob(docId);
 }
@@ -207,30 +209,30 @@ async function pump(): Promise<void> {
   }
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
 async function processDoc(docId: string): Promise<void> {
   const a = await getAuto();
   const dir = docDirOf(docId);
   const loaded = dir ? await loadDocumentCached(dir) : null;
+  if (aborted.has(docId)) return;
   if (!loaded) return setJob(docId, { stage: "error", error: "문서를 읽지 못했습니다." });
   const doc = loaded.doc;
   const docTitle = doc.title ?? doc.doc_id ?? docId;
   let trFailed: string | undefined;
 
-  if (a.translate) {
+  if (a.translate || a.pdf) {
     const blocks = autoTrBlocks(doc);
     setJob(docId, { stage: "translate", done: 0, total: blocks.length });
     // 사용자가 그 문서를 열어 이미 번역을 돌리고 있으면 끝나길 기다린다 — 겹치면 "이미 번역 중" 오류로 끝난다.
     // 기다린 뒤 다시 돌려도 캐시 적중이라 비용이 없다.
-    while (isTranslating(docId) && !aborted.has(docId)) await sleep(1500);
+    while (isTranslating(docId) && !aborted.has(docId)) await waitForDocTranslation(docId);
     if (aborted.has(docId)) return;
     if (blocks.length) {
-      const run = () =>
+      const run = (pending = blocks, force = false) =>
         translateDocument({
           docId,
           docTitle,
-          blocks,
+          blocks: pending,
+          force,
           onProgress: (pr) => {
             const j = jobs.get(docId);
             if (!j || j.stage !== "translate") return;
@@ -242,24 +244,47 @@ async function processDoc(docId: string): Promise<void> {
       let p = await run();
       // 대기 확인과 시작 사이에 렌더러가 번역을 시작했으면 "이미 번역 중" — 끝나길 기다렸다 한 번 더.
       for (let k = 0; k < 3 && p.state === "error" && p.error?.kind === "config" && isTranslating(docId) && !aborted.has(docId); k++) {
-        while (isTranslating(docId) && !aborted.has(docId)) await sleep(1500);
+        while (isTranslating(docId) && !aborted.has(docId)) await waitForDocTranslation(docId);
         if (!aborted.has(docId)) p = await run();
       }
       if (aborted.has(docId)) return;
       if (p.state === "canceled") return dropJob(docId); // 사용자가 번역을 멈췄다 — 요약도 돌리지 않는다
       if (p.error && STOP_KINDS.has(p.error.kind)) return setJob(docId, { stage: "error", error: p.error.message, done: p.cached + p.done, total: p.total });
+      // Automatic PDFs need the same completeness gate as manual export, including notes.
+      if (a.pdf) {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const entries = await cachedTranslations(docId, blocks);
+          const missing = blocks.filter((b) => !b.tableNote && !translatedText(b, entries[b.id]));
+          if (!missing.length) { trFailed = undefined; break; }
+          if (attempt === 2) return setJob(docId, { stage: "error", error: `${missing.length}개 본문·각주 항목의 번역이 남아 있어 PDF 저장을 중단했습니다.` });
+          p = await run(missing, missing.some((b) => !!entries[b.id]));
+          if (aborted.has(docId)) return;
+          if (p.state === "canceled") return dropJob(docId);
+          if (p.error && STOP_KINDS.has(p.error.kind)) return setJob(docId, { stage: "error", error: p.error.message });
+        }
+      }
       if (p.state === "error") trFailed = p.error?.message ?? "번역 실패";
     }
   }
 
-  if (a.summary) {
-    setJob(docId, { stage: "summary" });
-    const r = await generateSummary(docId, { priority: PRIORITY_BATCH });
+  let pdfPath: string | undefined;
+  // Do not make the main output wait for the optional summary.
+  if (a.pdf && (await getAuto()).pdf) {
     if (aborted.has(docId)) return;
-    if (r.error) return setJob(docId, { stage: "error", error: r.error.message });
+    setJob(docId, { stage: "pdf" });
+    pdfPath = await saveAutomaticPdf(docId);
+    if (aborted.has(docId)) return;
   }
 
-  setJob(docId, trFailed ? { stage: "error", error: trFailed } : { stage: "done" });
+  if (a.summary) {
+    if (aborted.has(docId)) return;
+    setJob(docId, { stage: "summary", pdfPath });
+    const r = await generateSummary(docId, { priority: PRIORITY_BATCH });
+    if (aborted.has(docId)) return;
+    if (r.error) return setJob(docId, { stage: "error", error: r.error.message, pdfPath });
+  }
+
+  setJob(docId, trFailed && !pdfPath ? { stage: "error", error: trFailed } : { stage: "done", pdfPath });
 }
 
 async function resume(): Promise<void> {
@@ -276,23 +301,24 @@ async function resume(): Promise<void> {
     if (typeof docId !== "string" || !docDirOf(docId) || jobs.has(docId) || expecting.has(docId)) continue;
     // 지난 실행에서 추출 도중 꺼졌으면 status 는 extracting/error — 이어갈 수 없다(사용자가 '다시 추출').
     if ((await readStatusState(docId)) !== "done") continue;
-    if (!a.translate && !a.summary) continue;
-    enqueue(docId, a.translate ? "translate" : "summary");
+    if (!a.translate && !a.summary && !a.pdf) continue;
+    enqueue(docId, a.translate || a.pdf ? "translate" : "summary");
   }
   persist(); // 이어가지 않은 항목을 파일에서 지운다
 }
 
 export function registerAutoPipeline(): void {
   ipcMain.handle("auto:status", () => Object.fromEntries(jobs));
-  ipcMain.handle("ai:auto", async (_e, patch?: { translate?: boolean; summary?: boolean }) => {
+  ipcMain.handle("ai:auto", async (_e, patch?: Partial<AutoOptions>) => {
     const cur = await getAuto();
     if (!patch || typeof patch !== "object") return cur;
     const next = {
       translate: typeof patch.translate === "boolean" ? patch.translate : cur.translate,
       summary: typeof patch.summary === "boolean" ? patch.summary : cur.summary,
+      pdf: typeof patch.pdf === "boolean" ? patch.pdf : cur.pdf,
     };
-    // saveSettings 는 ai 를 한 단계만 병합한다 → auto 는 통째로 보낸다.
-    await saveSettings({ ai: { auto: next } } as unknown as Settings);
+    // auto의 알려진 키만 저장한다. 기본 PDF 자동 저장은 꺼짐.
+    await saveSettings({ ai: { auto: next } });
     return next;
   });
   // UI 가 먼저 뜨게 잠시 뒤에 — 재개하자마자 agy 를 띄우면 첫 화면이 버벅인다.

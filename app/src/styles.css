@@ -800,6 +800,7 @@ body[data-hl-dim="on"] .reader-content ::selection { background: transparent; }
 .footnotes-list { margin: 6px 0 0; padding-left: 1.4em; color: var(--muted); font-size: 0.88em; }
 .footnotes-list li { margin: 6px 0; }
 .fn-list-label { color: var(--accent); font-weight: 600; margin-right: 6px; }
+.fn-translation { margin-top: .5em; padding: .4em 0 .4em .8em; border-left: 2px solid var(--accent); }
 
 /* ── 다크/세피아 수식 대비 (§11-12) — KaTeX 색을 테마 본문색에 맞춤 ── */
 .katex, .katex-display { color: var(--fg); }

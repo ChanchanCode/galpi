@@ -1,6 +1,8 @@
 // Preload — 렌더러에 안전한 API 표면만 노출 (contextIsolation).
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { PdfExportRequest, PdfExportResult } from "./pdfExport";
+import type { AutoOptions } from "./settings";
+import type { ProcessingMode } from "./processing";
 import type {
   AgyAccount,
   AgyQuotaView,
@@ -30,6 +32,7 @@ export type DocSummary = {
   pages_done: number;
   finished: boolean;
   last_read_at: string | null;
+  autoPdfPath?: string;
 };
 export type UserFont = { name: string; dataUrl: string };
 
@@ -271,6 +274,7 @@ const api = {
   exportHtml: (html: string, filename: string): Promise<{ path?: string; canceled?: boolean }> =>
     ipcRenderer.invoke("export:saveHtml", html, filename),
   exportPdf: (request: PdfExportRequest): Promise<PdfExportResult> => ipcRenderer.invoke("export:savePdf", request),
+  revealAutoPdf: (docId: string): Promise<boolean> => ipcRenderer.invoke("export:revealAutoPdf", docId),
   // ── AI 채팅 세션 (문서별 저장: docs/<id>/ai/chats/<sessionId>.json) ──────────
   chatList: (docId: string): Promise<ChatSessionMeta[]> => ipcRenderer.invoke("chat:list", docId),
   chatCreate: (docId: string, init?: { model?: string; context?: ChatContextMode; title?: string }): Promise<ChatSession> =>
@@ -318,16 +322,18 @@ const api = {
     ipcRenderer.on("summary:changed", h);
     return () => { ipcRenderer.removeListener("summary:changed", h); };
   },
-  // ── 추가 시 자동 파이프라인 (추출 → 번역 → 요약) ─────────────────────────
+  // ── 추가 시 자동 파이프라인 (추출 → 번역 → PDF → 요약) ────────────────────
   autoStatus: (): Promise<Record<string, AutoJobStatus>> => ipcRenderer.invoke("auto:status"),
   onAutoChanged: (cb: (s: Record<string, AutoJobStatus>) => void): (() => void) => {
     const h = (_e: unknown, p: Record<string, AutoJobStatus>) => cb(p);
     ipcRenderer.on("auto:changed", h);
     return () => { ipcRenderer.removeListener("auto:changed", h); };
   },
-  // patch 없이 부르면 조회만. 기본값 둘 다 true.
-  aiAuto: (patch?: { translate?: boolean; summary?: boolean }): Promise<{ translate: boolean; summary: boolean }> =>
+  // patch 없이 부르면 조회만. 번역/요약 기본 true, PDF 기본 false.
+  aiAuto: (patch?: Partial<AutoOptions>): Promise<AutoOptions> =>
     ipcRenderer.invoke("ai:auto", patch),
+  aiProcessing: (mode?: ProcessingMode): Promise<{ mode: ProcessingMode; translationConcurrency: number }> =>
+    ipcRenderer.invoke("ai:processing", mode),
   // ── 모델 선택 ─────────────────────────────────────────────────────────
   chatModels: (refresh?: boolean): Promise<ChatModelList> => ipcRenderer.invoke("ai:chatModels", refresh),
   setChatModel: (id: string): Promise<boolean> => ipcRenderer.invoke("ai:setChatModel", id),

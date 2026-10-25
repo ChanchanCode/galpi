@@ -135,13 +135,14 @@ export interface SummaryEvent {
 }
 
 // ── 추가 시 자동 파이프라인 (추출 완료 → 번역 → 요약) ────────────────────
-export type AutoStage = "extracting" | "translate" | "summary" | "done" | "error";
+export type AutoStage = "extracting" | "translate" | "pdf" | "summary" | "done" | "error";
 export interface AutoJobStatus {
   docId: string;
   stage: AutoStage;
   done?: number; // translate 단계 진행
   total?: number;
   error?: string;
+  pdfPath?: string;
 }
 /** push 채널 "auto:changed" → payload: Record<docId, AutoJobStatus> */
 

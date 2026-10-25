@@ -2,7 +2,6 @@
 // 경로는 app.getPath('userData') 로 OS-중립 (macOS/Windows 양쪽 동작).
 import { app, BrowserWindow, ipcMain, protocol, dialog, net, shell, nativeImage } from "electron";
 import path from "node:path";
-import os from "node:os";
 import fs from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { watch, existsSync } from "node:fs";
@@ -16,7 +15,11 @@ import { registerChatService } from "./ai/chat";
 import { docDirOf, registerSummaryService } from "./ai/summary";
 import { autoOnDeleted, autoOnExit, autoOnQueued, docIdForPdf, registerAutoPipeline } from "./ai/autoPipeline";
 import { loadLedger } from "./usage";
-import { registerPdfExport } from "./pdfExport";
+import { registerPdfExport, waitForAutomaticPdf } from "./pdfExport";
+import { currentProcessing } from "./processing";
+import { cancelDocTranslation, waitForDocTranslation } from "./ai/translateDoc";
+import { closeCache } from "./ai/translationCache";
+import { loadFootnoteDocument } from "./footnoteDocument";
 
 const isDev = !app.isPackaged;
 
@@ -132,6 +135,7 @@ ipcMain.handle("docs:list", async () => {
       if (!doc) continue; // document.json 없는 폴더는 건너뜀
       const status = await readJson(path.join(root, e.name, "status.json"));
       const state = await readJson(path.join(root, e.name, "state.json"));
+      const autoPdf = await readJson(path.join(root, e.name, "auto-pdf.json"));
       docs.push({
         doc_id: e.name,
         title: doc.title,
@@ -144,6 +148,7 @@ ipcMain.handle("docs:list", async () => {
         // 읽기 상태(§10 사이드카)
         finished: state?.finished ?? false,
         last_read_at: state?.last_read_at ?? null,
+        autoPdfPath: autoPdf?.path,
       });
     }
     return docs;
@@ -153,9 +158,7 @@ ipcMain.handle("docs:list", async () => {
 });
 
 ipcMain.handle("docs:load", async (_e, docId: string) => {
-  const file = path.join(docsRoot(), docId, "document.json");
-  const raw = await fs.readFile(file, "utf8");
-  return JSON.parse(raw);
+  return loadFootnoteDocument(path.join(docsRoot(), docId));
 });
 
 // state.json 사이드카 읽기/쓰기 (§10). 타이포·하이라이트·읽기위치 영속화.
@@ -223,7 +226,11 @@ ipcMain.handle("docs:delete", async (_e, docId: string) => {
     return { error: "잘못된 문서 ID" };
   }
   autoOnDeleted(docId); // 자동 번역·요약 대기열에서 빼고, 도는 중이면 끊는다
+  cancelDocTranslation(docId);
   try {
+    // Let canceled writers finish before removal, otherwise cache/PDF sidecars can recreate the folder.
+    await Promise.all([waitForDocTranslation(docId), waitForAutomaticPdf(docId)]);
+    await closeCache(docId);
     await fs.rm(dir, { recursive: true, force: true });
     return { ok: true };
   } catch (err) {
@@ -304,7 +311,7 @@ async function startDocsWatcher() {
   await fs.mkdir(root, { recursive: true });
   try {
     watch(root, { recursive: true }, (_evt, filename) => {
-      if (filename && !/document\.json|status\.json/.test(String(filename))) return;
+      if (filename && !/document\.json|status\.json|auto-pdf\.json/.test(String(filename))) return;
       if (watchDebounce) clearTimeout(watchDebounce);
       watchDebounce = setTimeout(() => {
         for (const w of BrowserWindow.getAllWindows()) w.webContents.send("docs:changed");
@@ -323,9 +330,9 @@ interface ExtractJob { pdfPath: string; py: string; scriptsDir: string; script: 
 const extractQueue: ExtractJob[] = [];
 let extractActive = false;
 
-// MinerU 의 BLAS/OMP 스레드를 코어 절반으로 제한 → 추출 중에도 컴퓨터가 멈추지 않게.
-function extractEnv(): NodeJS.ProcessEnv {
-  const n = String(Math.max(1, Math.floor(os.cpus().length / 2)));
+// 속도 설정·시스템 부하에 따라 MinerU BLAS/OMP 스레드를 조정한다.
+function extractEnv(threads: number): NodeJS.ProcessEnv {
+  const n = String(threads);
   return {
     ...process.env,
     OMP_NUM_THREADS: n,
@@ -337,16 +344,18 @@ function extractEnv(): NodeJS.ProcessEnv {
   };
 }
 
-function runNextExtract(): void {
+async function runNextExtract(): Promise<void> {
   if (extractActive) return;
   const job = extractQueue.shift();
   if (!job) return;
   extractActive = true;
-  const env = extractEnv();
+  const profile = await currentProcessing(await readSettings());
+  const env = extractEnv(profile.extractionThreads);
   // 우선순위를 낮춰(nice) 다른 앱이 멈추지 않게. (mac/linux; win 은 그대로)
   const useNice = process.platform !== "win32";
   const cmd = useNice ? "nice" : job.py;
-  const args = useNice ? ["-n", "15", job.py, job.script, job.pdfPath] : [job.script, job.pdfPath];
+  const args = useNice ? ["-n", String(profile.extractionNice), job.py, job.script, job.pdfPath] : [job.script, job.pdfPath];
+  args.push("--chunk", String(profile.extractionChunk));
   if (job.docId) args.push("--doc-id", job.docId); // 재추출: 기존 문서 폴더 유지
   const notifyAuto = (code: number | null) => {
     if (job.isNew && job.newDocId) autoOnExit(job.newDocId, code);
@@ -496,7 +505,9 @@ app.whenReady().then(async () => {
   registerAIService();
   registerChatService();
   registerSummaryService();
-  registerPdfExport();
+  registerPdfExport({ loadWorker: (win, docId) => isDev
+    ? win.loadURL(`http://localhost:5123/?autoPdf=${encodeURIComponent(docId)}`)
+    : win.loadFile(path.join(__dirname, "../dist/index.html"), { query: { autoPdf: docId } }) });
   registerAutoPipeline(); // 지난 실행에서 끝나지 않은 자동 번역·요약을 잠시 뒤 이어서 돈다
   registerDocProtocol();
   const win = createWindow();

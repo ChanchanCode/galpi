@@ -24,6 +24,8 @@ export function isBrokenTableText(block: Block, doc: PaperDocument): boolean {
 
 export function translatedText(block: TrSource, entry: TrEntry | undefined): string {
   let text = entry?.ko.trim() || entry?.spans?.map((span) => span.ko).join(" ").trim() || "";
+  if (block.kind === "footnote" && /[A-Za-z]{2,}\s+[A-Za-z]{2,}/.test(block.text)
+    && !/[가-힣]{2}/.test(text)) return "";
   if (!block.tableNote) return text;
   // The cached model result may have echoed the damaged input before a valid Korean
   // translation. Remove only an exact source prefix; preserve the actual translation.
@@ -33,7 +35,7 @@ export function translatedText(block: TrSource, entry: TrEntry | undefined): str
   return /[가-힣]{2}/.test(text) ? text : "";
 }
 export function translationFragments(block: TrSource, entry: TrEntry): { text: string; index: number | null }[] {
-  if (block.tableNote) {
+  if (block.tableNote || block.kind === "footnote") {
     const text = translatedText(block, entry);
     return text ? [{ text, index: null }] : [];
   }

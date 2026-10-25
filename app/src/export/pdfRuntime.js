@@ -62,10 +62,12 @@
       for (const [key, value] of Object.entries(page.sourceFit)) {
         if (key !== "scale") source.style[key === "x" ? "left" : key === "y" ? "top" : key] = `${value}pt`;
       }
-      const img = document.createElement("img");
-      img.src = page.url;
-      img.alt = `원문 ${page.index}쪽`;
-      source.append(img);
+      if (page.url) {
+        const img = document.createElement("img");
+        img.src = page.url;
+        img.alt = `원문 ${page.index}쪽`;
+        source.append(img);
+      }
       const divider = document.createElement("div");
       divider.className = "pdf-divider";
       const translation = document.createElement("div");

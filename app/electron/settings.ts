@@ -12,6 +12,11 @@ import { appSupportDir, secretsPath, settingsPath } from "./paths";
 export type AIProvider = "gemini" | "openai" | "anthropic";
 export const AI_PROVIDERS: AIProvider[] = ["gemini", "openai", "anthropic"];
 
+export interface AutoOptions { translate: boolean; summary: boolean; pdf: boolean }
+export function autoOptions(raw?: Partial<AutoOptions>): AutoOptions {
+  return { translate: raw?.translate !== false, summary: raw?.summary !== false, pdf: raw?.pdf === true };
+}
+
 export interface AISettings {
   provider?: AIProvider;
   models?: Partial<Record<AIProvider, string>>;
@@ -25,7 +30,7 @@ export interface AISettings {
   // 채팅·요약 기본 모델 id ("agy:<m>" | "rest:<p>:<m>"). 없으면 DEFAULT_CHAT_MODEL.
   chatModel?: string;
   // PDF 추가 시 자동 번역·요약. 없으면 둘 다 켜짐.
-  auto?: { translate?: boolean; summary?: boolean };
+  auto?: Partial<AutoOptions>;
 }
 export type Settings = Record<string, unknown> & { ai?: AISettings; pythonPath?: string };
 

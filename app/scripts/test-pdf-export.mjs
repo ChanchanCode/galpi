@@ -59,8 +59,8 @@ try {
     await page.getByRole('button',{name:'번역',exact:true}).click();
     const ref = page.locator('.tr-col [data-tr-for="b2"] .fn-ref');
     await ref.evaluate((el)=>el.click());
-    await page.getByRole('dialog',{name:'원문 각주 11',exact:true}).waitFor();
-    assert.ok((await page.locator('.fn-pop').innerText()).includes('Synthetic original footnote'));
+    await page.getByRole('dialog',{name:'각주 11',exact:true}).waitFor();
+    assert.ok((await page.locator('.fn-pop').innerText()).includes('합성 각주의 번역'));
     assert.equal(await page.locator('.fn-pop .katex').count(),1);
     assert.equal(await page.locator('.rd-canvas .fn-pop').count(),0);
     await page.keyboard.press('Escape');
@@ -86,13 +86,13 @@ try {
       });
     }
     await page.locator('.src-canvas [data-tr-for="b2"] .fn-ref').evaluate((el)=>el.click());
-    await page.getByRole('dialog',{name:'원문 각주 11',exact:true}).waitFor();
+    await page.getByRole('dialog',{name:'각주 11',exact:true}).waitFor();
     await page.keyboard.press('Escape');
   }
   await page.getByRole('button', {name:'내보내기',exact:true}).click();
   await waitReady(page);
   metrics.fillCalls = await app.evaluate(()=>globalThis.fillCalls??[]);
-  if (!process.env.GALPI_PDF_REAL_DOC) assert.deepEqual(metrics.fillCalls,[['b3']]);
+  if (!process.env.GALPI_PDF_REAL_DOC) assert.deepEqual(metrics.fillCalls,[['b3','fn11:fn:11']]);
   const frame = page.frameLocator('iframe[title="PDF 저장 미리보기"]');
   await page.getByRole('button', {name:'기본 배치로 초기화',exact:true}).click();
   await waitReady(page);
@@ -106,6 +106,8 @@ try {
     assert.equal(await frame.locator('.pdf-sheet[data-source-page="2"] .pdf-math-display').count(),2);
     assert.equal(await frame.locator('.pdf-math-raw').count(),0);
     assert.equal(await frame.locator('#pdf-note-2-11').count(),1);
+    assert.match(await frame.locator('#pdf-note-2-11').innerText(), /각주 11.*합성 각주의 번역/s);
+    assert.ok(!(await frame.locator('#pdf-note-2-11').innerText()).includes('Synthetic original footnote'));
     await frame.locator('.pdf-fn-ref a').click();
     assert.equal(await frame.locator('#pdf-note-2-11.flash').count(),1);
   } else if (title==='Do ETFs Increase Volatility?') {
@@ -114,6 +116,19 @@ try {
     assert.ok(note.includes('본 표는 ETF 보유 지분율'));
     assert.ok(!note.includes('themeananddividing') && !note.includes('Thetablereportsestimates'));
     assert.equal(await frame.locator('#pdf-note-18-11').count(),1);
+  } else if (title==='OP-REVF220050') {
+    const ids=await frame.locator('.pdf-footnote[id]').evaluateAll(notes=>notes.map(note=>note.id));
+    assert.equal(ids.length,47);
+    assert.equal(new Set(ids).size,47);
+    for(const label of ['5','6','7']) assert.equal(await frame.locator(`#pdf-note-7-${label}`).count(),1);
+    for(const label of ['8','9','10']) assert.equal(await frame.locator(`#pdf-note-8-${label}`).count(),1);
+    const page7=await frame.locator('.pdf-sheet').evaluateAll(sheets=>sheets.findIndex(sheet=>sheet.dataset.sourcePage==='7')+1);
+    await page.getByLabel('미리보기 페이지',{exact:true}).selectOption(String(page7));
+    await page.screenshot({path:path.join(qaRoot,'preview-footnotes-page7.png')});
+    const page8=await frame.locator('.pdf-sheet').evaluateAll(sheets=>sheets.findIndex(sheet=>sheet.dataset.sourcePage==='8')+1);
+    await page.getByLabel('미리보기 페이지',{exact:true}).selectOption(String(page8));
+    await page.screenshot({path:path.join(qaRoot,'preview-footnotes-page8.png')});
+    metrics.separateNotes=47;
   }
   await page.screenshot({path:path.join(qaRoot,'preview-default.png')});
   if (!process.env.GALPI_PDF_REAL_DOC) {

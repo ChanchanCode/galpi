@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { registerPdfExport } from '../../electron/pdfExport';
 import { readSettings, saveSettings } from '../../electron/settings';
+import { loadFootnoteDocument } from '../../electron/footnoteDocument';
 async function run() {
 const root = process.env.GALPI_PDF_QA_ROOT!;
 const appRoot = process.env.GALPI_APP_ROOT!;
@@ -46,7 +47,7 @@ if (process.env.GALPI_PDF_REAL_DOC) {
    const from = path.join(process.env.GALPI_PDF_REAL_DOC!, name);
    try { await fs.cp(from, path.join(dir, name), {recursive:true}); } catch (e:any) { if (e.code !== 'ENOENT') throw e; }
  }
- doc=JSON.parse(await fs.readFile(path.join(dir,'document.json'),'utf8'));
+ doc=await loadFootnoteDocument(dir);
  doc.doc_id='pdf-qa';
  entries=Object.fromEntries(doc.blocks.filter((b:any)=>b.text).map((b:any)=>[b.id,{ko:'검증용 번역: 원문 페이지와 함께 조판하여 저장 결과를 확인합니다. '+ '수익률과 거래량의 관계를 분석하고 자료와 모형의 가정을 확인한다. '.repeat(5)}]));
 }
@@ -72,7 +73,7 @@ const replies:any = {
  'translate:doc':async(_e:any,opts:any)=>{
   (globalThis as any).fillCalls=((globalThis as any).fillCalls??[]).concat([opts.blocks.map((b:any)=>b.id)]);
   for(const b of opts.blocks) {
-   const entry={ko:process.env.GALPI_PDF_REAL_DOC?'[검증용 모의 추가 번역] 누락 문단을 채우는 동작을 확인합니다.':'자동 추가 번역으로 빠진 문단을 채웠습니다.',autoFilled:true};
+   const entry={ko:process.env.GALPI_PDF_REAL_DOC?'[검증용 모의 추가 번역] 누락 문단을 채우는 동작을 확인합니다.':b.kind==='footnote'?'합성 각주의 번역은 $\\gamma=2$ 수식을 보존합니다.':'자동 추가 번역으로 빠진 문단을 채웠습니다.',autoFilled:true};
    entries[b.id]=entry;
    for(const win of BrowserWindow.getAllWindows())win.webContents.send('translate:block',{docId:opts.docId,id:b.id,...entry,fromCache:false});
   }

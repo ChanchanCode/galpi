@@ -16,29 +16,45 @@ export const PRIORITY_BATCH = 0;
 
 export class JobQueue {
   private active = 0;
+  private batchActive = 0;
   private waiting: Waiter[] = [];
   private seq = 0;
-  constructor(private limit: number) {}
+  constructor(private limit: number, private reservedInteractive = 0) {}
+
+  setLimit(limit: number): void {
+    this.limit = Math.max(1, Math.floor(limit));
+    this.drain();
+  }
+
+  private drain(): void {
+    while (this.active < this.limit) {
+      const i = this.waiting.findIndex((w) => w.priority > PRIORITY_BATCH
+        || this.batchActive < Math.max(1, this.limit - this.reservedInteractive));
+      if (i < 0) break;
+      const [next] = this.waiting.splice(i, 1);
+      // Reserve the slot before resolving: a new arrival cannot steal a waking waiter's slot.
+      this.active++;
+      if (next.priority <= PRIORITY_BATCH) this.batchActive++;
+      next.start();
+    }
+  }
 
   get stats(): { active: number; waiting: number; limit: number } {
     return { active: this.active, waiting: this.waiting.length, limit: this.limit };
   }
 
   async run<T>(id: string, fn: () => Promise<T>, priority = PRIORITY_INTERACTIVE): Promise<T> {
-    if (this.active >= this.limit) {
-      await new Promise<void>((resolve, reject) => {
-        this.waiting.push({ id, priority, seq: this.seq++, start: resolve, drop: reject });
-        // 우선순위 내림차순, 같으면 먼저 온 순서
-        this.waiting.sort((a, b) => b.priority - a.priority || a.seq - b.seq);
-      });
-    }
-    this.active += 1;
+    await new Promise<void>((resolve, reject) => {
+      this.waiting.push({ id, priority, seq: this.seq++, start: resolve, drop: reject });
+      this.waiting.sort((a, b) => b.priority - a.priority || a.seq - b.seq);
+      this.drain();
+    });
     try {
       return await fn();
     } finally {
       this.active -= 1;
-      const next = this.waiting.shift();
-      if (next) next.start();
+      if (priority <= PRIORITY_BATCH) this.batchActive--;
+      this.drain();
     }
   }
 

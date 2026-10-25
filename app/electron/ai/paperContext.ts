@@ -7,6 +7,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { Block, PaperDocument } from "../../src/types";
 import { buildFootnotes } from "../../src/render/footnotes";
+import { loadFootnoteDocument } from "../footnoteDocument";
 import { buildFrontMatter, isSpacedLabel } from "../../src/render/frontmatter";
 import { buildPageMerges, type PageMerge } from "../../src/render/pagemerge";
 import type { ChatContextMode, PaperSummary } from "./chatTypes";
@@ -281,7 +282,7 @@ export async function loadDocumentCached(docDir: string): Promise<{ doc: PaperDo
     const st = await fs.stat(file);
     const hit = docCache.get(file);
     if (hit && hit.mtimeMs === st.mtimeMs) return hit;
-    const doc = JSON.parse(await fs.readFile(file, "utf8")) as PaperDocument;
+    const doc = await loadFootnoteDocument(docDir);
     if (!doc || !Array.isArray(doc.blocks)) return null;
     const entry = { mtimeMs: st.mtimeMs, doc };
     docCache.set(file, entry);

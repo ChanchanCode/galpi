@@ -320,6 +320,7 @@ function Spread({
                 data-level={b.type === "heading" ? Math.min(Math.max(b.level ?? 2, 1), 6) : undefined}
               >
                 {b.tableNote && <span className="tr-note-label">표 설명</span>}
+                {b.footnoteLabel && <span className="tr-note-label">각주 {b.footnoteLabel}</span>}
                 {fragments.map((s, i) => <span key={i} className="tr-s" data-g={s.index == null ? undefined : `${b.id}#${s.index}`}><TrText text={s.text} /> </span>)}
               </p>
             );

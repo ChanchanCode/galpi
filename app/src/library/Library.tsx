@@ -56,7 +56,7 @@ export function Library({ docs, onOpen, onToggleFinished, onRefresh, onOpenSetti
     window.paperAPI.loadLibrary().then(setLib);
   }, []);
 
-  // 추가 시 자동 처리(번역 → 요약) 진행 — 카드 하단 배지로만 보인다.
+  // 추가 시 자동 처리(번역 → PDF → 요약) 진행 — 카드 하단 배지로 보인다.
   const [auto, setAuto] = useState<Record<string, AutoJobStatus>>({});
   useEffect(() => {
     let pushed = false; // 초기 조회보다 push 가 먼저 오면 늦은 조회 결과로 되돌리지 않는다
@@ -389,6 +389,11 @@ export function Library({ docs, onOpen, onToggleFinished, onRefresh, onOpenSetti
                     `${d.page_count}p`
                   )}
                   <AutoBadge st={d.state === "error" ? undefined : auto[d.doc_id]} />
+                  {(d.autoPdfPath || auto[d.doc_id]?.pdfPath) && <button className="auto-pdf-saved"
+                    title="자동 저장한 PDF를 Finder에서 보기" aria-label="자동 저장 PDF 보기"
+                    onClick={(e) => { e.stopPropagation(); void window.paperAPI.revealAutoPdf(d.doc_id).then((found) => {
+                      if (!found) window.alert("자동 저장한 PDF를 찾지 못했습니다. 다운로드 폴더를 확인해 주세요.");
+                    }).catch(() => window.alert("자동 저장한 PDF를 찾지 못했습니다.")); }}>PDF 저장됨 ↗</button>}
                   {read && <span className="doc-dot">·</span>}
                   {read && <span>{read} 읽음</span>}
                 </span>
@@ -457,13 +462,13 @@ function AutoBadge({ st }: { st?: AutoJobStatus }) {
   if (st.stage === "error") {
     return <span className="auto-err" title={st.error ? `자동 처리 오류 · ${st.error}` : "자동 처리 오류"} aria-label="자동 처리 오류" />;
   }
-  if (st.stage !== "translate" && st.stage !== "summary") return null;
+  if (st.stage !== "translate" && st.stage !== "summary" && st.stage !== "pdf") return null;
   const n = st.stage === "translate" && st.total ? ` ${st.done ?? 0}/${st.total}` : "";
   return (
     <>
       <span className="doc-dot">·</span>
-      <span className="auto-badge" title={st.stage === "translate" ? "자동 번역 중" : "핵심 요약 중"}>
-        {st.stage === "translate" ? "번역" : "요약"}{n}
+      <span className="auto-badge" title={st.stage === "translate" ? "자동 번역 중" : st.stage === "pdf" ? "원문+번역 PDF 저장 중" : "핵심 요약 중"}>
+        {st.stage === "translate" ? "번역" : st.stage === "pdf" ? "PDF 저장" : "요약"}{n}
       </span>
     </>
   );

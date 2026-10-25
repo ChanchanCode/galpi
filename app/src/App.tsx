@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import type { PaperDocument } from "./types";
 import type { DocSummary } from "../electron/preload";
 import { BlockRenderer } from "./render/BlockRenderer";
-import { buildFootnotes } from "./render/footnotes";
+import { buildFootnotes, type Footnote } from "./render/footnotes";
 import { FootnoteContext } from "./render/footnoteContext";
 import { buildCrossRefIndex, CrossRefContext } from "./render/crossrefs";
 import { buildPageMerges, EMPTY_PAGE_MERGE } from "./render/pagemerge";
@@ -25,6 +25,8 @@ import { TranslateColumn } from "./translate/TranslateColumn";
 import { SourceView } from "./translate/SourceView";
 import { TranslatePopover } from "./translate/TranslatePopover";
 import { TrCardMenu } from "./translate/TrCardMenu";
+import { TrText } from "./translate/TrText";
+import { translatedText } from "./translate/translationContent";
 import { docScaleStyle, useCanvas } from "./translate/useCanvas";
 import { ZoomBar } from "./translate/ZoomBar";
 import { SourcePeek } from "./sourcepeek/SourcePeek";
@@ -49,7 +51,7 @@ import { FigureMenu } from "./selection/FigureMenu";
 import { MIME_ATTACH, MIME_QUOTE } from "./selection/quote";
 
 // 채팅 패널 안에 포커스가 있을 때(버튼·목록) 본문 단축키가 새지 않게. 입력칸은 isEditableTarget 이 이미 막는다.
-const EMPTY_FOOTNOTES = new Map();
+const EMPTY_FOOTNOTES = new Map<string, Footnote>();
 
 const inChatPanel = (t: EventTarget | null) => t instanceof Element && !!t.closest(".chat-panel");
 
@@ -149,6 +151,16 @@ export function App() {
     });
   }, [doc, footnotes, frontMatter, pageMerge]);
   const tr = useTranslation(doc?.doc_id ?? null, doc?.title ?? doc?.doc_id ?? "", trBlocks);
+  const translatedFootnotes = useMemo(() => {
+    const notes = new Map(footnotes?.byLabel ?? EMPTY_FOOTNOTES);
+    for (const block of trBlocks) {
+      if (!block.footnoteLabel) continue;
+      const note = notes.get(block.footnoteLabel);
+      const translation = translatedText(block, tr.entries.get(block.id));
+      if (note && translation) notes.set(block.footnoteLabel, { ...note, translation });
+    }
+    return notes;
+  }, [footnotes, trBlocks, tr.entries]);
   // 본문 블록 목록은 **문서가 바뀔 때만** 다시 만든다. 번역 토글·채팅 열기처럼 App 상태만 바뀌는 렌더에서
   // 수백 블록(KaTeX 포함)을 다시 그리면 T 를 눌러도 카드가 0.3초 늦게 떴다(사용자 신고 · 실측 330ms).
   const crossRefValue = useMemo(() => ({ index: crossRefIndex, docId: doc?.doc_id ?? "" }), [crossRefIndex, doc?.doc_id]);
@@ -598,7 +610,7 @@ export function App() {
             <main className="reader-scroll" style={cssVars}>
               <CrossRefContext.Provider value={crossRefValue}>
               <ReadingContext.Provider value={reading}>
-              <FootnoteContext.Provider value={footnotes?.byLabel ?? EMPTY_FOOTNOTES}>
+              <FootnoteContext.Provider value={translatedFootnotes}>
                 {/* 번역 컬럼은 .reader-content **밖**이다(D19) — 안에 넣으면 형광펜·검색·
                     내보내기 등 .reader-content 를 잡는 모듈 10곳이 한국어를 본문으로 먹는다. */}
                 <div className="rd-canvas" data-view={tr.view} ref={rd.canvasRef} onPointerDown={rd.onPointerDown}>
@@ -629,9 +641,12 @@ export function App() {
                           <li key={fn.label} data-fn-item={fn.label}>
                             <span className="fn-list-label">{fn.label}</span>
                             <BlockRenderer
-                              block={{ id: `fn-${fn.label}`, type: "footnote", page: 0, bbox: null, text: fn.html }}
+                              block={{ id: fn.id, type: "footnote", page: fn.page, bbox: null, text: fn.html }}
                               docId={doc.doc_id}
                             />
+                            {tr.on && translatedFootnotes.get(fn.label)?.translation && (
+                              <div className="fn-translation"><TrText text={translatedFootnotes.get(fn.label)!.translation!} linkFootnotes={false} /></div>
+                            )}
                           </li>
                         ))}
                       </ol>
@@ -663,7 +678,7 @@ export function App() {
               {/* 보기 B — 왼쪽만 원본 지면으로 갈린다(D9). .reader-content 는 CSS 로 숨길 뿐
                   언마운트하지 않는다 — 형광펜·메모·검색이 잡고 있는 컨테이너다. */}
               {tr.view === "source" && (
-                <FootnoteContext.Provider value={footnotes?.byLabel ?? EMPTY_FOOTNOTES}>
+                <FootnoteContext.Provider value={translatedFootnotes}>
                 <SourceView
                   doc={doc}
                   cv={srcCv}

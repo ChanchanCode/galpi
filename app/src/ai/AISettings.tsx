@@ -591,7 +591,10 @@ function ChatModelSection() {
 
 // ── 추가 시 자동 처리 ─────────────────────────────────────────────────
 function AutoSection() {
-  const [auto, setAuto] = useState<{ translate: boolean; summary: boolean } | null>(null);
+  const [auto, setAuto] = useState<Awaited<ReturnType<typeof window.paperAPI.aiAuto>> | null>(null);
+  const [processing, setProcessing] = useState<Awaited<ReturnType<typeof window.paperAPI.aiProcessing>> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -599,12 +602,15 @@ function AutoSection() {
       .aiAuto()
       .then((r) => alive && setAuto(r))
       .catch(() => { /* 토글 비활성으로 남긴다 */ });
+    void window.paperAPI.aiProcessing().then((r) => alive && setProcessing(r)).catch(() => {});
     return () => { alive = false; };
   }, []);
 
-  const flip = async (k: "translate" | "summary") => {
-    if (!auto) return;
+  const flip = async (k: "translate" | "summary" | "pdf") => {
+    if (!auto || busy) return;
     const v = !auto[k];
+    setBusy(true);
+    setError("");
     setAuto((a) => (a ? { ...a, [k]: v } : a));
     try {
       const r = await window.paperAPI.aiAuto({ [k]: v });
@@ -612,26 +618,46 @@ function AutoSection() {
       setAuto((a) => (a ? { ...a, [k]: r[k] } : a));
     } catch {
       setAuto((a) => (a ? { ...a, [k]: !v } : a));
-    }
+      setError("자동 처리 설정을 저장하지 못했습니다.");
+    } finally { setBusy(false); }
   };
 
   return (
     <div className="typo-section">
       <span className="ctrl-label" title="PDF 추가 후">자동</span>
       <div className="ai-row">
-        {(["translate", "summary"] as const).map((k) => (
+        {(["translate", "summary", "pdf"] as const).map((k) => (
           <button
             key={k}
             className={`seg-btn ai-toggle ${auto?.[k] ? "on" : ""}`}
             aria-pressed={!!auto?.[k]}
-            disabled={!auto}
-            title={k === "translate" ? "PDF 추가 후 전체 번역" : "번역 후 핵심 요약"}
+            disabled={!auto || busy}
+            aria-label={k === "pdf" ? "원문+번역 PDF 자동 저장" : `자동 ${k === "translate" ? "번역" : "요약"}`}
+            title={k === "translate" ? "PDF 추가 후 전체 번역" : k === "summary" ? "번역 후 핵심 요약"
+              : "PDF 추가 → 전체 번역 → 다운로드/Galpi에 자동 저장. 내보내기 설정 사용. 기본 꺼짐."}
             onClick={() => void flip(k)}
           >
-            {k === "translate" ? "번역" : "요약"}
+            {k === "translate" ? "번역" : k === "summary" ? "요약" : "원문+번역 PDF"}
           </button>
         ))}
       </div>
+      {auto?.pdf && <div className="ai-row"><span className="ai-muted">저장 위치</span><span>다운로드 / Galpi</span></div>}
+      <div className="ai-row">
+        <span className="ai-muted">처리 속도</span>
+        {(["balanced", "auto", "fast"] as const).map((mode) => <button key={mode}
+          className={`seg-btn ${processing?.mode === mode ? "on" : ""}`}
+          aria-label={`처리 속도 ${mode === "balanced" ? "부하 최소" : mode === "auto" ? "자동" : "빠르게"}`}
+          aria-pressed={processing?.mode === mode} disabled={!processing || busy}
+          title={mode === "balanced" ? "번역 1묶음 · 추출 6쪽씩 · CPU 절반 · 낮은 우선순위"
+            : mode === "auto" ? "CPU 부하·가용 메모리에 따라 번역 1–4묶음 · 자원이 여유로우면 추출 CPU 활용 증가 및 12쪽씩 처리"
+            : "번역 최대 4묶음 병렬 · 추출 CPU 활용 증가 · 메모리가 충분하면 24쪽씩 처리 · AI 서버 한도의 영향은 유지"}
+          onClick={() => {
+            setBusy(true); setError("");
+            void window.paperAPI.aiProcessing(mode).then(setProcessing)
+              .catch(() => setError("처리 속도 설정을 저장하지 못했습니다.")).finally(() => setBusy(false));
+          }}>{mode === "balanced" ? "부하 최소" : mode === "auto" ? "자동" : "빠르게"}</button>)}
+      </div>
+      {error && <span role="alert">{error}</span>}
     </div>
   );
 }

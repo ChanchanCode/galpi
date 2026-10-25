@@ -4,6 +4,7 @@ import type { Block, PaperDocument } from "../types";
 import { isSpacedLabel } from "../render/frontmatter";
 import type { PageMerge } from "../render/pagemerge";
 import { isBrokenTableText } from "./translationContent";
+import { buildFootnotes } from "../render/footnotes";
 
 export type TrKind = "para" | "title" | "footnote" | "list" | "formula" | "table" | "other";
 
@@ -15,19 +16,20 @@ export interface TrSource {
   type: Block["type"];
   level?: number; // heading 전용 — 번역 카드도 원문과 같은 위계로 그린다
   tableNote?: boolean; // Damaged rotated table description; show only a usable translation.
+  footnoteLabel?: string;
 }
 
 // 번역하는 타입. 빠진 것들의 이유:
 //  · formula/table/figure — 글이 아니다(LaTeX·HTML·이미지).
 //  · reference — 참고문헌. 번역해도 값이 없고 편당 40블록이라 비용만 먹는다.
-//  · footnote — 각주는 접힌 <details> 로 끌려 나가 있어 카드를 붙일 자리가 없다.
-const TRANSLATE_TYPES = new Set<Block["type"]>(["paragraph", "heading", "list", "caption"]);
+const TRANSLATE_TYPES = new Set<Block["type"]>(["paragraph", "heading", "list", "caption", "footnote"]);
 
 const KIND: Partial<Record<Block["type"], TrKind>> = {
   paragraph: "para",
   heading: "title",
   list: "list",
   caption: "para",
+  footnote: "footnote",
 };
 
 export interface HiddenSets {
@@ -52,6 +54,12 @@ export function collectTrBlocks(doc: PaperDocument, h: HiddenSets): TrSource[] {
     const tableNote = isBrokenTableText(b, doc);
     if (tableNote && text.replace(/<[^>]*>/g, "").replace(/\s+/g, "").length < 40) continue;
     out.push({ id: b.id, text, kind: KIND[b.type] ?? "other", page: b.page, type: b.type, level: b.level, tableNote });
+  }
+  // A carrier may contain several definitions, or one note may span pages. Translate
+  // the assembled definition once, with its own identity, instead of the raw carrier.
+  for (const note of buildFootnotes(doc.blocks).ordered) {
+    if (!note.html.trim()) continue;
+    out.push({ id: note.id, text: note.html, kind: "footnote", page: note.page, type: "footnote", footnoteLabel: note.label });
   }
   return out;
 }

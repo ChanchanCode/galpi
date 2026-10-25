@@ -51,7 +51,7 @@ export function TranslateColumn({ blocks, entries, width, onWidth, redoing, rela
   const alignCache = useRef(new Map<string, { el: HTMLElement; src: string; a: Alignment }>());
   const activeRef = useRef<HTMLElement | null>(null);
 
-  const shown = blocks.filter((b) => translatedText(b, entries.get(b.id)));
+  const shown = blocks.filter((b) => b.kind !== "footnote" && translatedText(b, entries.get(b.id)));
 
   // ── 행 정렬 (D20) ──────────────────────────────────────────────
   // 번역이 원문보다 길면 **원문이 간격을 내준다**(사용자 확정).

@@ -14,7 +14,8 @@
     "package:mac": "npm run build && electron-builder --mac",
     "package:win": "npm run build && electron-builder --win",
     "test": "node .p2build.mjs && node --test test/",
-    "test:pdf": "npm run build && node scripts/test-pdf-export.mjs"
+    "test:pdf": "npm run build && node scripts/test-pdf-export.mjs",
+    "test:automatic": "npm run build && node scripts/test-automatic-pdf.mjs"
   },
   "dependencies": {
     "dompurify": "^3.2.4",

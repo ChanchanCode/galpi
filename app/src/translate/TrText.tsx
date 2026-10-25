@@ -18,7 +18,8 @@ export const TrText = memo(function TrText({ text, linkFootnotes = true }: { tex
     }
     const label = footnoteLabel(token);
     const note = label && linkFootnotes ? notes.get(label) : undefined;
-    if (note) return <FootnoteRef key={key} note={note} sourceLabel="원문 각주" body={<TrText text={note.html} linkFootnotes={false} />} />;
+    if (note) return <FootnoteRef key={key} note={note} sourceLabel={note.translation ? "각주" : "원문 각주"}
+      body={<TrText text={note.translation ?? note.html} linkFootnotes={false} />} />;
     const Tag = token.tag;
     return <Tag key={key}>{render(token.children, key)}</Tag>;
   });

@@ -1,7 +1,7 @@
 // AI 서비스 — 렌더러가 쓰는 유일한 입구. IPC: ai:stream / ai:cancel / ai:estimate / ai:status.
 //
 // 한 호출이 지나는 길:
-//   차단기 게이트 → 큐(동시 2) → 백엔드 스트림 → 델타 push → 원장 기록 → 차단기 갱신
+//   차단기 게이트 → 큐(번역 1–4 + 인터랙션 1) → 스트림 → 원장 기록 → 차단기 갱신
 // 재시도는 5xx/네트워크만, 이미 흘린 텍스트가 없을 때만. 429 는 재시도하지 않는다(H3).
 import { ipcMain, type IpcMainInvokeEvent } from "electron";
 import { existsSync } from "node:fs";
@@ -43,6 +43,7 @@ import {
 } from "./translateDoc";
 import * as usage from "../usage";
 import type { UsageScope } from "../usage";
+import { currentProcessing, processingMode } from "../processing";
 
 export { parseRoute, type ParsedRoute } from "./models";
 
@@ -71,7 +72,7 @@ export interface AIJobInput {
   turnTimeoutMs?: number;
 }
 
-const queue = new JobQueue(2);
+const queue = new JobQueue(2, 1);
 const running = new Map<string, AbortController>();
 let callSeq = 0;
 
@@ -253,6 +254,7 @@ export async function runAIJob(
     const send = onDelta;
 
     try {
+      queue.setLimit((await currentProcessing(await readSettings())).translationConcurrency + 1);
       return await queue.run(job.jobId, async () => {
         let lastErr: AIError | null = null;
         let lastPartial = "";
@@ -346,6 +348,12 @@ export function cancelJobPrefix(prefix: string): number {
 }
 
 export function registerAIService(): void {
+  ipcMain.handle("ai:processing", async (_e, raw?: unknown) => {
+    if (raw !== undefined) await saveSettings({ processingMode: processingMode(raw) });
+    const profile = await currentProcessing(await readSettings());
+    queue.setLimit(profile.translationConcurrency + 1);
+    return profile;
+  });
   // 한도 폴러를 주기로 돌리지 않는다 — agy 호출 하나하나가 키체인 프롬프트를 띄운다.
   // (사용자 신고로 확인: 5분마다 프롬프트. agy 는 거의 매일 갱신돼 ACL 이 자주 무효화된다.)
   ipcMain.handle("ai:stream", async (e: IpcMainInvokeEvent, raw: AIJobInput) =>
@@ -428,6 +436,8 @@ export function registerAIService(): void {
     // 스페어·판정·모델 목록은 옛 HOME 기준이다. 한도 캐시는 계정별 키라 그대로 둔다.
     onAccountChanged();
     invalidateModelCache();
+    // 차단기 키(agy:gemini-agy)는 계정을 가리지 않는다 — 옛 계정의 429 차단이 새 계정까지 막지 않게 푼다.
+    breaker.reset();
     return { ok: true };
   });
   ipcMain.handle("agy:login", async (_e, alias: string) => {

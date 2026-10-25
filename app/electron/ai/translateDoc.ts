@@ -3,7 +3,7 @@
 // 설계 요점:
 //  · 블록 단위 캐시 — 중단은 손실이 아니라 일시정지다. 재개하면 캐시 있는 블록은 건너뛴다.
 //  · **뷰포트 우선** — 렌더러가 정렬해 넘긴 순서를 그대로 따른다. 위에서부터 채우면 읽던 화면이 밀린다.
-//  · 배치 동시성은 **1** — 큐 한도가 2 이므로 한 칸을 항상 선택 번역(사람이 기다리는 쪽)에 비워 둔다.
+//  · 자원/속도 설정에 따라 1–4 배치를 병렬 처리하며 전역 큐는 선택 번역용 한 칸을 예약한다.
 //  · 한도/차단기/인증 오류는 **남은 배치를 즉시 포기**한다. 안 그러면 남은 200블록이
 //    전부 즉시 실패로 원장에 쌓인다.
 import { BrowserWindow } from "electron";
@@ -16,6 +16,8 @@ import type { TokenUsage } from "./types";
 import { runAIJob, cancelJobPrefix, resolvedBackendId, type AIJobResult } from "./service";
 import type { BlockKind } from "./estimate";
 import { estimate } from "./estimate";
+import { currentProcessing } from "../processing";
+import { runBatches } from "./batchScheduler";
 
 export interface TrBlock {
   id: string;
@@ -64,7 +66,7 @@ const DEFAULT_MAX_BLOCKS = 12;
 // 이 종류의 오류가 나면 남은 배치를 계속 던져 봐야 전부 즉시 실패한다.
 const FATAL = new Set(["rate_limit", "breaker", "auth", "config", "canceled"]);
 
-const active = new Map<string, { canceled: boolean }>();
+const active = new Map<string, { canceled: boolean; finished: Promise<void> }>();
 
 function send(channel: string, payload: unknown): void {
   for (const w of BrowserWindow.getAllWindows()) {
@@ -172,6 +174,10 @@ export function isTranslating(docId: string): boolean {
   return active.has(docId);
 }
 
+export function waitForDocTranslation(docId: string): Promise<void> {
+  return active.get(docId)?.finished ?? Promise.resolve();
+}
+
 // 캐시에 이미 있는 것만 즉시 돌려준다(문서를 열자마자 칠하기 위함).
 export async function cachedTranslations(
   docId: string,
@@ -200,138 +206,153 @@ export async function translateDocument(opts: TranslateDocOpts): Promise<Transla
       message: "이미 번역 중입니다.",
     });
   }
-  const state = { canceled: false };
+  let finish!: () => void;
+  const state = { canceled: false, finished: new Promise<void>((resolve) => { finish = resolve; }) };
   active.set(docId, state);
 
-  const anchorMode: AnchorMode = opts.anchorMode ?? "full";
-  const feature = anchorMode === "prefix" ? "translate.blocks.prefix" : "translate.blocks";
-  const prompt = promptFor(feature);
-  const ctx = await contextFor(feature);
-  const cache = await cacheFor(docId);
+  try {
 
-  const usageTotal = zero();
-  let cached = 0;
-  let done = 0;
-  let failed = 0;
-  let err: { kind: string; message: string } | undefined;
+    const anchorMode: AnchorMode = opts.anchorMode ?? "full";
+    const feature = anchorMode === "prefix" ? "translate.blocks.prefix" : "translate.blocks";
+    const prompt = promptFor(feature);
+    const ctx = await contextFor(feature);
+    const cache = await cacheFor(docId);
 
-  // 1) 캐시 적중분을 먼저 뱉는다 — 사용자는 즉시 화면을 본다.
-  const pending: TrBlock[] = [];
-  for (const b of blocks) {
-    if (!b.text?.trim()) continue;
-    const hit = opts.force ? null : cache.get(b.text, ctx);
-    if (hit) {
-      cached += 1;
-      send("translate:block", {
-        docId,
-        id: b.id,
-        ko: hit.ko,
-        spans: hit.spans,
-        coverage: hit.coverage,
-        fromCache: true,
-      } satisfies TranslatedBlock);
-    } else {
-      pending.push(b);
+    const usageTotal = zero();
+    let cached = 0;
+    let done = 0;
+    let failed = 0;
+    let err: { kind: string; message: string } | undefined;
+
+    // 1) 캐시 적중분을 먼저 뱉는다 — 사용자는 즉시 화면을 본다.
+    const pending: TrBlock[] = [];
+    for (const b of blocks) {
+      if (!b.text?.trim()) continue;
+      const hit = opts.force ? null : cache.get(b.text, ctx);
+      if (hit) {
+        cached += 1;
+        send("translate:block", {
+          docId,
+          id: b.id,
+          ko: hit.ko,
+          spans: hit.spans,
+          coverage: hit.coverage,
+          fromCache: true,
+        } satisfies TranslatedBlock);
+      } else {
+        pending.push(b);
+      }
     }
-  }
 
-  const batches = makeBatches(pending, opts.maxCharsPerBatch ?? DEFAULT_MAX_CHARS, opts.maxBlocksPerBatch ?? DEFAULT_MAX_BLOCKS);
-  // 견적은 planTranslation(사전 게이트)과 **같은 함수**를 쓴다 — 갈라지면 게이트가 거짓말을 한다.
-  const est = estimateBatches(pending, batches.length, prompt.system, await resolvedBackendId(), feature);
+    const batches = makeBatches(pending, opts.maxCharsPerBatch ?? DEFAULT_MAX_CHARS, opts.maxBlocksPerBatch ?? DEFAULT_MAX_BLOCKS);
+    // 견적은 planTranslation(사전 게이트)과 **같은 함수**를 쓴다 — 갈라지면 게이트가 거짓말을 한다.
+    const est = estimateBatches(pending, batches.length, prompt.system, await resolvedBackendId(), feature);
 
-  const emit = (st: TranslateProgress["state"], bDone: number) => {
-    const p = progressOf(docId, st, blocks.length, cached, done, failed, usageTotal, est, { done: bDone, total: batches.length }, err);
+    const emit = (st: TranslateProgress["state"], bDone: number) => {
+      const p = progressOf(docId, st, blocks.length, cached, done, failed, usageTotal, est, { done: bDone, total: batches.length }, err);
+      send("translate:progress", p);
+      notify(opts, p);
+    };
+    emit("running", 0);
+
+    let completed = 0;
+    let halted = false;
+    let concurrency = (await currentProcessing(await readSettings())).translationConcurrency;
+    await runBatches(batches, () => concurrency, async (batch, i) => {
+      if (state.canceled || halted) return;
+      try {
+        const preps = new Map(batch.map((b) => [b.id, prepare(b.text)]));
+        const payload = batch.map((b) => ({ id: b.id, text: preps.get(b.id)!.text }));
+
+        const res: AIJobResult = await runAIJob(
+          {
+            jobId: `trdoc_${docId}_${i}`,
+            feature,
+            text: JSON.stringify(payload),
+            docId,
+            docTitle: opts.docTitle,
+            scope: { kind: "blocks", n_blocks: batch.length, block_ids: [batch[0].id, batch[batch.length - 1].id] },
+          },
+          () => {},
+          PRIORITY_BATCH,
+        );
+
+        if (res.error) {
+          failed += batch.length;
+          if (!halted) err = { kind: res.error.kind, message: res.error.message };
+          if (FATAL.has(res.error.kind) && !halted) {
+            halted = true;
+            cancelJobPrefix(`trdoc_${docId}_`);
+          }
+          return;
+        }
+        addUsage(usageTotal, res.usage);
+
+        let parsed;
+        try {
+          parsed = parseBlocksJson(res.text ?? "");
+        } catch (e) {
+          failed += batch.length;
+          if (!halted) err = { kind: "parse", message: `응답을 JSON 으로 못 읽었습니다: ${String(e)}` };
+          return;
+        }
+
+        const nowIso = new Date().toISOString();
+        const perBlockIn = Math.round((res.usage?.in ?? 0) / Math.max(1, batch.length));
+        const perBlockOut = Math.round((res.usage?.out ?? 0) / Math.max(1, batch.length));
+        for (const b of batch) {
+          const got = parsed.find((x) => x.id === b.id);
+          if (!got) {
+            failed += 1;
+            continue;
+          }
+          const r = resolve(preps.get(b.id)!, got, b.id, anchorMode);
+          if (!r.ko.trim()) {
+            failed += 1;
+            continue;
+          }
+          const entry: CacheEntry = {
+            ko: r.ko,
+            spans: r.spans.filter((s) => s.ok).map((s) => ({ start: s.start, end: s.end, ko: s.ko })),
+            coverage: r.coverage,
+            model: ctx.model,
+            ts: nowIso,
+            in: perBlockIn,
+            out: perBlockOut,
+          };
+          cache.set(b.text, ctx, entry);
+          done += 1;
+          send("translate:block", {
+            docId,
+            id: b.id,
+            ko: entry.ko,
+            spans: entry.spans,
+            coverage: entry.coverage,
+            fromCache: false,
+          } satisfies TranslatedBlock);
+        }
+      } finally {
+        completed++;
+        concurrency = (await currentProcessing(await readSettings())).translationConcurrency;
+        emit("running", completed);
+      }
+    }, () => state.canceled || halted);
+
+    await cache.flush();
+    if (failed && !err) err = { kind: "parse", message: `${failed}개 문단의 번역이 누락됐습니다.` };
+    const final: TranslateProgress["state"] = state.canceled ? "canceled" : halted || failed ? "error" : "done";
+    const p = progressOf(docId, final, blocks.length, cached, done, failed, usageTotal, est, {
+      done: completed,
+      total: batches.length,
+    }, err);
     send("translate:progress", p);
     notify(opts, p);
-  };
-  emit("running", 0);
-
-  // 2) 배치를 **순차로** 돌린다(동시성 1). 큐 한 칸을 선택 번역에 비워 두기 위해서다.
-  for (let i = 0; i < batches.length; i++) {
-    if (state.canceled) break;
-    const batch = batches[i];
-    const preps = new Map(batch.map((b) => [b.id, prepare(b.text)]));
-    const payload = batch.map((b) => ({ id: b.id, text: preps.get(b.id)!.text }));
-
-    const res: AIJobResult = await runAIJob(
-      {
-        jobId: `trdoc_${docId}_${i}`,
-        feature,
-        text: JSON.stringify(payload),
-        docId,
-        docTitle: opts.docTitle,
-        scope: { kind: "blocks", n_blocks: batch.length, block_ids: [batch[0].id, batch[batch.length - 1].id] },
-      },
-      () => {},
-      PRIORITY_BATCH,
-    );
-
-    if (res.error) {
-      failed += batch.length;
-      err = { kind: res.error.kind, message: res.error.message };
-      if (FATAL.has(res.error.kind)) break; // 남은 배치를 던지지 않는다
-      emit("running", i + 1);
-      continue;
-    }
-    addUsage(usageTotal, res.usage);
-
-    let parsed;
-    try {
-      parsed = parseBlocksJson(res.text ?? "");
-    } catch (e) {
-      failed += batch.length;
-      err = { kind: "parse", message: `응답을 JSON 으로 못 읽었습니다: ${String(e)}` };
-      emit("running", i + 1);
-      continue;
-    }
-
-    const nowIso = new Date().toISOString();
-    const perBlockIn = Math.round((res.usage?.in ?? 0) / Math.max(1, batch.length));
-    const perBlockOut = Math.round((res.usage?.out ?? 0) / Math.max(1, batch.length));
-    for (const b of batch) {
-      const got = parsed.find((x) => x.id === b.id);
-      if (!got) {
-        failed += 1;
-        continue;
-      }
-      const r = resolve(preps.get(b.id)!, got, b.id, anchorMode);
-      if (!r.ko.trim()) {
-        failed += 1;
-        continue;
-      }
-      const entry: CacheEntry = {
-        ko: r.ko,
-        spans: r.spans.filter((s) => s.ok).map((s) => ({ start: s.start, end: s.end, ko: s.ko })),
-        coverage: r.coverage,
-        model: ctx.model,
-        ts: nowIso,
-        in: perBlockIn,
-        out: perBlockOut,
-      };
-      cache.set(b.text, ctx, entry);
-      done += 1;
-      send("translate:block", {
-        docId,
-        id: b.id,
-        ko: entry.ko,
-        spans: entry.spans,
-        coverage: entry.coverage,
-        fromCache: false,
-      } satisfies TranslatedBlock);
-    }
-    emit("running", i + 1);
+    return p;
+  } finally {
+    cancelJobPrefix(`trdoc_${docId}_`);
+    active.delete(docId);
+    finish();
   }
-
-  await cache.flush();
-  active.delete(docId);
-  const final: TranslateProgress["state"] = state.canceled ? "canceled" : err && done === 0 ? "error" : "done";
-  const p = progressOf(docId, final, blocks.length, cached, done, failed, usageTotal, est, {
-    done: batches.length,
-    total: batches.length,
-  }, err);
-  send("translate:progress", p);
-  notify(opts, p);
-  return p;
 }
 
 // 콜백 예외가 배치 루프를 끊으면 안 된다.
