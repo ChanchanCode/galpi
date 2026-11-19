@@ -1,5 +1,19 @@
 # 작업 로그
 
+[2026-11-19 11:30] v0.4.0 공개 배포
+
+한 일:
+- 0.4.0으로 올려 b3b3e2b(10-04·10-06·10-25 작업)와 다계정 로그아웃 수정을 함께 배포했다. 배포 전 단위 92개·test:pdf·test:automatic 통과.
+- 첫 태그 빌드는 `macos-14` 러너 지원 종료로 1초 만에 취소됐다. release.yml을 `macos-latest`로 바꾸고, 릴리스가 생기기 전이라 v0.4.0 태그를 수정 커밋(3530d40)으로 옮겨 다시 푸시했다. 빌드 1분 54초 성공.
+- 릴리스 제목과 설치 안내(Gatekeeper "그래도 열기", 원클릭 추출 엔진, AI 키/구독)를 넣었다.
+
+검증:
+- 인증 없이 공개 DMG(HTTP 200)·ZIP을 받았다. ZIP SHA-256 `8ba1cf5474742d1ed49d5a7cb1bcdc5141851bec4fafdbf35712deb832c2ec61`가 GitHub digest와 일치한다. 앱 버전 0.4.0, codesign 통과, main.cjs에 토큰 사본 동기화와 계정 전환 차단 해제가 들어 있다. latest-mac.yml·releases/latest API 모두 0.4.0.
+- 설치 앱(/Applications/Galpi.app)은 교체하지 않았다. 다음 실행 때 자동 업데이트로 받는다.
+
+결과:
+- https://github.com/ChanchanCode/galpi/releases/tag/v0.4.0
+
 [2026-11-19 11:13] agy 다계정 로그아웃 수정 — 그냥 받아쓰기의 키체인 수정 이식
 
 한 일:
