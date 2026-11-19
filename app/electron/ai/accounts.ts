@@ -20,7 +20,6 @@ let storeRoot = path.join(realHome, ".claude", ".state", "gemini-accounts");
 export function setAccountRoots(opts: { home?: string; store?: string }): void {
   if (opts.home) realHome = opts.home;
   if (opts.store) storeRoot = opts.store;
-  keychainDone.clear();
 }
 export function accountStore(): string {
   return storeRoot;
@@ -67,7 +66,15 @@ export interface AccountRow {
   current: boolean;
 }
 
-/** main 먼저, 그다음 저장소 폴더 사전순. 로그인 여부는 oauth 토큰 파일 크기로 판정. */
+function fileSize(p: string): number {
+  try {
+    return statSync(p).size;
+  } catch {
+    return 0;
+  }
+}
+
+/** main 먼저, 그다음 저장소 폴더 사전순. 로그인 여부는 토큰 파일(옛 방식) 또는 키체인 토큰 사본 크기로 판정. */
 export function listAccounts(current: string): AccountRow[] {
   const homes: [string, string][] = [[MAIN_ALIAS, realHome]];
   try {
@@ -86,15 +93,14 @@ export function listAccounts(current: string): AccountRow[] {
     } catch {
       /* 모름 */
     }
-    // main 은 토큰이 macOS 키체인에 있어 파일로 판정 불가 → null(미상)
-    let loggedIn: boolean | null = null;
-    if (alias !== MAIN_ALIAS) {
-      try {
-        loggedIn = statSync(path.join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token")).size > 0;
-      } catch {
-        loggedIn = false;
-      }
-    }
+    // main 은 토큰이 실제 login 키체인에 있어 파일로 판정 불가 → null(미상).
+    // 가짜 홈은 토큰 파일(옛 방식) 또는 계정 키체인 — 키체인 토큰은 syncToken 이 남긴 사본으로 본다.
+    const loggedIn =
+      alias === MAIN_ALIAS
+        ? null
+        : [path.join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"), path.join(home, TOKEN_COPY)].some(
+            (f) => fileSize(f) > 0,
+          );
     return { alias, email, loggedIn, current: alias === current };
   });
 }
@@ -102,16 +108,48 @@ export function listAccounts(current: string): AccountRow[] {
 // ── 계정 키체인 ─────────────────────────────────────────────────────
 // 원리(gemini-acct 2026-08-31 실측): 가짜 홈의 login.keychain-db 는 unlock 이 안 되지만 이 이름만 암묵적
 // 기본 키체인으로 잡혀 "저장할 키체인 없음" 팝업이 안 뜬다. 갓 만든 키체인은 그 부팅 동안 저장 가능 →
-// **부팅마다 새로 만든다.** 내용물은 agy 캐시일 뿐(토큰 정본은 파일)이라 재생성 손실이 없다.
-// 부팅 스탬프 형식(첫 줄, 개행 없음)은 받아쓰기·gemini-acct 와 같아야 서로 재생성을 반복하지 않는다.
+// **부팅마다 새로 만든다.**
+// 토큰은 이 키체인에만 있다(2026-10-26 agy 가 토큰 파일을 키체인으로 옮기고 파일은 .bak) →
+// 같은 부팅에서는 절대 지우지 않고, 새로 만든 뒤에는 홈의 사본(.keychain-token)으로 되채운다.
+// 부팅 스탬프 형식(첫 줄, 개행 없음)·사본 위치는 받아쓰기(engine.py)·gemini-acct 와 같아야 서로 지우지 않는다.
 
-function exec(bin: string, args: string[], timeoutMs: number): Promise<{ code: number; out: string }> {
+const SEC = "/usr/bin/security";
+const KC_ITEM = ["-s", "gemini", "-a", "antigravity"]; // agy(go-keyring)가 토큰을 넣는 항목(받아쓰기 실측)
+const TOKEN_COPY = ".keychain-token";
+// go-keyring 이 넣는 값은 "go-keyring-base64:<base64>" — 따옴표 없이 security 대화형 명령줄에 넣어도 되는 글자뿐.
+const SAFE_TOKEN = /^[A-Za-z0-9+/=:_.-]+$/;
+
+/** kern.boottime 두 값이 같은 부팅인가. 이 값은 재부팅 없이도 시계 보정 때마다 바뀐다(받아쓰기 실측:
+ *  같은 부팅에서 usec 이 바뀌고 계정끼리 12초 차) → 글자 비교로는 키체인을 지워 로그아웃된다.
+ *  초 단위로 10분 안이면 같은 부팅으로 본다(받아쓰기 _same_boot·gemini-acct 와 같은 기준). */
+export function sameBoot(a: string | null | undefined, b: string | null | undefined): boolean {
+  const sec = (v: string | null | undefined): number | null => {
+    const m = /\{ sec = (\d+)/.exec(v ?? "");
+    return m ? Number(m[1]) : null;
+  };
+  const x = sec(a);
+  const y = sec(b);
+  return x !== null && y !== null && Math.abs(x - y) < 600;
+}
+
+/** 사본으로 키체인 토큰을 되채우는 `security -i` 입력 한 줄(순수). 토큰을 명령줄 인자로 넘기면 ps 에 보인다 →
+ *  go-keyring 과 같이 대화형 stdin 으로 넣는다. 그대로 넣을 수 없는 값이면 null. */
+export function tokenRestoreCommand(token: string, kc: string): string | null {
+  if (!SAFE_TOKEN.test(token) || /["\\\r\n]/.test(kc)) return null;
+  return `add-generic-password -U ${KC_ITEM.join(" ")} -w ${token} "${kc}"\n`;
+}
+
+function exec(bin: string, args: string[], timeoutMs: number, input?: string): Promise<{ code: number; out: string }> {
   return new Promise((resolve) => {
     try {
-      execFile(bin, args, { timeout: timeoutMs, encoding: "utf8" }, (err, stdout) => {
+      const child = execFile(bin, args, { timeout: timeoutMs, encoding: "utf8" }, (err, stdout) => {
         const code = err ? (typeof (err as { code?: unknown }).code === "number" ? (err as { code: number }).code : -1) : 0;
         resolve({ code, out: String(stdout ?? "") });
       });
+      if (input !== undefined) {
+        child.stdin?.on("error", () => {}); // 먼저 죽으면 EPIPE — 결과는 콜백이 알린다
+        child.stdin?.end(input);
+      }
     } catch {
       resolve({ code: -1, out: "" });
     }
@@ -119,18 +157,47 @@ function exec(bin: string, args: string[], timeoutMs: number): Promise<{ code: n
 }
 
 let bootCache: string | null = null;
-const keychainDone = new Set<string>();
+async function bootTime(): Promise<string | null> {
+  if (bootCache === null) {
+    const r = await exec("/usr/sbin/sysctl", ["-n", "kern.boottime"], 5000);
+    const first = r.code === 0 ? r.out.split("\n")[0] : "";
+    if (first) bootCache = first;
+  }
+  return bootCache;
+}
+
 const keychainInflight = new Map<string, Promise<void>>();
 
-/** 가짜 홈의 키체인을 이번 부팅용으로 맞춘다. 절대 throw 하지 않는다. 저장소 밖 HOME(=실제 홈)이면 아무것도 안 한다. */
+/** 가짜 홈의 키체인을 이번 부팅용으로 맞추고 토큰을 사본과 맞춘다. agy 를 띄우기 전마다 부른다.
+ *  절대 throw 하지 않는다. 저장소 밖 HOME(=실제 홈)이면 아무것도 안 한다. */
 export function ensureKeychain(home: string): Promise<void> {
+  return keychainTask(home, true);
+}
+
+/** 목록용 — 이번 부팅의 키체인이 있는 계정만 토큰 사본을 맞춘다. 키체인을 만들거나 지우지 않는다.
+ *  터미널에서 막 로그인한 계정은 토큰이 키체인에만 있어서, 사본이 생겨야 목록에서 로그인으로 보인다. */
+export async function syncTokenCopies(): Promise<void> {
+  if (process.platform !== "darwin") return;
+  let names: string[];
+  try {
+    names = readdirSync(storeRoot, { withFileTypes: true })
+      .filter((d) => d.isDirectory() && validAlias(d.name) && d.name !== MAIN_ALIAS)
+      .map((d) => d.name);
+  } catch {
+    return;
+  }
+  await Promise.all(names.map((n) => keychainTask(path.join(storeRoot, n), false)));
+}
+
+function keychainTask(home: string, create: boolean): Promise<void> {
   if (process.platform !== "darwin" || !isStoreHome(home)) return Promise.resolve();
-  const key = path.resolve(home);
-  if (keychainDone.has(key)) return Promise.resolve();
+  const h = path.resolve(home);
+  // 같은 홈에 대한 동시 호출이 delete/create 를 겹쳐 돌리면 서로의 키체인을 지운다 → 한 줄로.
+  // 만드는 호출은 만들지 않는 호출의 결과를 빌려 쓰지 않는다(그 뒤에도 키체인이 없을 수 있다).
+  const key = `${h}\0${create ? "create" : "sync"}`;
   let p = keychainInflight.get(key);
   if (!p) {
-    // 같은 홈에 대한 동시 호출이 delete/create 를 겹쳐 돌리면 서로의 키체인을 지운다 → 한 줄로.
-    p = doEnsureKeychain(key)
+    p = doEnsureKeychain(h, create)
       .catch(() => {})
       .finally(() => keychainInflight.delete(key));
     keychainInflight.set(key, p);
@@ -138,38 +205,64 @@ export function ensureKeychain(home: string): Promise<void> {
   return p;
 }
 
-async function doEnsureKeychain(home: string): Promise<void> {
-  if (bootCache === null) {
-    const r = await exec("/usr/sbin/sysctl", ["-n", "kern.boottime"], 5000);
-    const first = r.code === 0 ? r.out.split("\n")[0] : "";
-    if (!first) return;
-    bootCache = first;
-  }
-  const boot = bootCache;
+async function doEnsureKeychain(home: string, create: boolean): Promise<void> {
+  const boot = await bootTime();
+  if (!boot) return;
   const kc = path.join(home, "Library", "Keychains", "login.keychain-db");
   const stamp = path.join(home, ".keychain-boot");
   const cur = await fs.readFile(stamp, "utf8").catch(() => null);
-  if (existsSync(kc) && cur === boot) {
-    keychainDone.add(home);
+  if (!existsSync(kc) || !sameBoot(cur, boot)) {
+    if (!create || !(await newKeychain(kc, stamp, boot))) return;
+  }
+  await syncToken(home, kc);
+}
+
+async function newKeychain(kc: string, stamp: string, boot: string): Promise<boolean> {
+  await fs.mkdir(path.dirname(kc), { recursive: true });
+  await exec(SEC, ["delete-keychain", kc], 10000);
+  await fs.rm(kc, { force: true }).catch(() => {});
+  const c = await exec(SEC, ["create-keychain", "-p", "", kc], 10000);
+  if (c.code !== 0) return false;
+  await exec(SEC, ["set-keychain-settings", kc], 10000);
+  await fs.writeFile(stamp, boot, "utf8");
+  // create-keychain 이 실계정 검색 목록에 자기를 등록하는 부작용 제거(다른 항목 보존)
+  const l = await exec(SEC, ["list-keychains", "-d", "user"], 10000);
+  if (l.code === 0) {
+    const keep = l.out
+      .split("\n")
+      .map((x) => x.trim().replace(/^"|"$/g, ""))
+      .filter((x) => x && !x.includes("gemini-accounts"));
+    if (keep.length) await exec(SEC, ["list-keychains", "-d", "user", "-s", ...keep], 10000);
+  }
+  return true;
+}
+
+/** 키체인 토큰 ↔ 홈의 사본(.keychain-token). 키체인에 있으면 사본을 갱신하고, 비어 있으면(재부팅 뒤 재생성,
+ *  다른 앱이 먼저 재생성) 사본으로 되채운다. 사본도 없으면 agy 가 남긴 .bak 을 토큰 파일로 되돌린다 —
+ *  agy 가 그 파일을 읽고 키체인으로 다시 옮긴다(받아쓰기 실측). */
+async function syncToken(home: string, kc: string): Promise<void> {
+  const copy = path.join(home, TOKEN_COPY);
+  const r = await exec(SEC, ["find-generic-password", ...KC_ITEM, "-w", kc], 10000);
+  const cur = r.code === 0 ? r.out.trim() : "";
+  if (cur) {
+    if ((await fs.readFile(copy, "utf8").catch(() => null)) !== cur) {
+      const tmp = `${copy}.${process.pid}.tmp`;
+      await fs.writeFile(tmp, cur, { encoding: "utf8", mode: 0o600 });
+      await fs.rename(tmp, copy);
+    }
     return;
   }
-  const sec = "/usr/bin/security";
-  await fs.mkdir(path.dirname(kc), { recursive: true });
-  await exec(sec, ["delete-keychain", kc], 10000);
-  await fs.rm(kc, { force: true }).catch(() => {});
-  const c = await exec(sec, ["create-keychain", "-p", "", kc], 10000);
-  if (c.code !== 0) return;
-  await exec(sec, ["set-keychain-settings", kc], 10000);
-  await fs.writeFile(stamp, boot, "utf8");
-  keychainDone.add(home);
-  // create-keychain 이 실계정 검색 목록에 자기를 등록하는 부작용 제거(다른 항목 보존)
-  const l = await exec(sec, ["list-keychains", "-d", "user"], 10000);
-  if (l.code !== 0) return;
-  const keep = l.out
-    .split("\n")
-    .map((x) => x.trim().replace(/^"|"$/g, ""))
-    .filter((x) => x && !x.includes("gemini-accounts"));
-  if (keep.length) await exec(sec, ["list-keychains", "-d", "user", "-s", ...keep], 10000);
+  const saved = (await fs.readFile(copy, "utf8").catch(() => "")).trim();
+  const cmd = saved ? tokenRestoreCommand(saved, kc) : null;
+  if (cmd) {
+    await exec(SEC, ["-i"], 10000, cmd);
+    return;
+  }
+  const tok = path.join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token");
+  if (!existsSync(tok) && existsSync(`${tok}.bak`)) {
+    await fs.copyFile(`${tok}.bak`, tok);
+    await fs.chmod(tok, 0o600);
+  }
 }
 
 /** alias 계정으로 agy 를 띄울 env. 가짜 홈이면 키체인을 먼저 맞춘다. */

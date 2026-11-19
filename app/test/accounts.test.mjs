@@ -1,5 +1,5 @@
 // accounts.ts 결정적 검증 — 가짜 저장소·가짜 홈으로 별칭 검증·목록·경로 탈출 차단·로그인 스크립트를 본다.
-// 키체인(security)은 건드리지 않는다: 저장소 밖 HOME 거부 경로만 확인한다.
+// 키체인(security)은 건드리지 않는다: 저장소 밖 HOME 거부와 키체인이 없는 계정 경로만 확인한다.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -81,6 +81,19 @@ test("listAccounts — main 먼저·사전순·이메일·토큰 크기로 로�
   fs.rmSync(base, { recursive: true, force: true });
 });
 
+test("listAccounts — 키체인 토큰 사본도 로그인으로 본다(.bak 은 아니다)", () => {
+  const { store, base } = fakeRoots();
+  const kc = mkAcct(store, "kc");
+  fs.writeFileSync(path.join(kc, ".keychain-token"), "go-keyring-base64:abc=");
+  const old = mkAcct(store, "old");
+  fs.writeFileSync(path.join(old, ".gemini", "antigravity-cli", "antigravity-oauth-token.bak"), "tok");
+  const empty = mkAcct(store, "empty");
+  fs.writeFileSync(path.join(empty, ".keychain-token"), "");
+  const rows = Object.fromEntries(A.listAccounts("main").map((r) => [r.alias, r.loggedIn]));
+  assert.deepEqual(rows, { main: null, empty: false, kc: true, old: false });
+  fs.rmSync(base, { recursive: true, force: true });
+});
+
 test("listAccounts — 저장소가 없으면 main 만", () => {
   const { store, base } = fakeRoots();
   fs.rmSync(store, { recursive: true, force: true });
@@ -124,5 +137,41 @@ test("openLogin — 잘못된 별칭은 파일을 만들기 전에 거부", asyn
   const r = await A.openLogin("../x", { cwd, agyBin: "/bin/echo" });
   assert.equal(r.ok, false);
   assert.equal(fs.existsSync(cwd), false);
+  fs.rmSync(base, { recursive: true, force: true });
+});
+
+test("sameBoot — 초 단위 10분 안이면 같은 부팅(시계 보정으로 usec·초가 바뀌어도)", () => {
+  const stamp = "{ sec = 1794887751, usec = 670321 } Tue Nov 17 12:55:51 2026";
+  assert.equal(A.sameBoot(stamp, stamp), true);
+  assert.equal(A.sameBoot(stamp, "{ sec = 1794887752, usec = 382089 } Tue Nov 17 12:55:52 2026"), true);
+  assert.equal(A.sameBoot(stamp, "{ sec = 1794887763, usec = 0 } Tue Nov 17 12:56:03 2026"), true); // 계정끼리 12초 차
+  assert.equal(A.sameBoot(stamp, "{ sec = 1794888350, usec = 0 }"), true); // 599초
+  assert.equal(A.sameBoot(stamp, "{ sec = 1794888351, usec = 0 }"), false); // 600초 = 다른 부팅
+  assert.equal(A.sameBoot(stamp, "{ sec = 1790608569, usec = 646030 } Tue Sep 29 00:16:09 2026"), false);
+  for (const bad of [null, undefined, "", "garbage", "{ sec = , usec = 1 }"]) {
+    assert.equal(A.sameBoot(stamp, bad), false, String(bad));
+    assert.equal(A.sameBoot(bad, stamp), false, String(bad));
+  }
+});
+
+test("tokenRestoreCommand — go-keyring 값만 대화형 한 줄로, 따옴표 깨지는 값은 거부", () => {
+  const kc = "/Users/a b/.claude/.state/gemini-accounts/pyh/Library/Keychains/login.keychain-db";
+  assert.equal(
+    A.tokenRestoreCommand("go-keyring-base64:eyJhIjoxfQ==", kc),
+    `add-generic-password -U -s gemini -a antigravity -w go-keyring-base64:eyJhIjoxfQ== "${kc}"\n`,
+  );
+  for (const bad of ["", "a b", "a\nb", 'a"b', "a'b", "a;b", "a$b"]) assert.equal(A.tokenRestoreCommand(bad, kc), null, bad);
+  assert.equal(A.tokenRestoreCommand("go-keyring-base64:x", '/tmp/a"b/login.keychain-db'), null);
+  assert.equal(A.tokenRestoreCommand("go-keyring-base64:x", "/tmp/a\nb/login.keychain-db"), null);
+});
+
+test("syncTokenCopies — 키체인이 없는 계정은 만들지도 지우지도 않는다", async () => {
+  const { store, base } = fakeRoots();
+  const h = mkAcct(store, "pyh", { token: "tok" });
+  await A.syncTokenCopies();
+  assert.equal(fs.existsSync(path.join(h, "Library")), false);
+  assert.equal(fs.existsSync(path.join(h, ".keychain-boot")), false);
+  assert.equal(fs.existsSync(path.join(h, ".keychain-token")), false);
+  assert.equal(fs.readFileSync(path.join(h, ".gemini", "antigravity-cli", "antigravity-oauth-token"), "utf8"), "tok");
   fs.rmSync(base, { recursive: true, force: true });
 });

@@ -6,7 +6,7 @@
 import { ipcMain, type IpcMainInvokeEvent } from "electron";
 import { existsSync } from "node:fs";
 import { getSecret, readSettings, saveSettings, secretsPresent, setSecret, type AIProvider } from "../settings";
-import { MAIN_ALIAS, acctHome, listAccounts, normalizeAlias, openLogin, validAlias } from "./accounts";
+import { MAIN_ALIAS, acctHome, listAccounts, normalizeAlias, openLogin, syncTokenCopies, validAlias } from "./accounts";
 import { agyCwd, findAgy, gcConversations } from "./agy";
 import {
   AgyBackend,
@@ -426,9 +426,11 @@ export function registerAIService(): void {
   });
 
   // ── agy 계정 (그냥 받아쓰기·gemini-acct 와 같은 저장소) ───────────────
-  ipcMain.handle("agy:accounts", async (): Promise<AgyAccount[]> =>
-    listAccounts(normalizeAlias((await readSettings()).ai?.agyAccount)),
-  );
+  ipcMain.handle("agy:accounts", async (): Promise<AgyAccount[]> => {
+    // 터미널에서 막 로그인한 계정은 토큰이 키체인에만 있다 — 사본을 먼저 맞춰야 "로그인 필요"가 풀린다.
+    await syncTokenCopies();
+    return listAccounts(normalizeAlias((await readSettings()).ai?.agyAccount));
+  });
   ipcMain.handle("agy:setAccount", async (_e, alias: string) => {
     if (!validAlias(alias)) return { ok: false, error: "별칭은 영문·숫자·_- 20자 이내" };
     if (alias !== MAIN_ALIAS && !existsSync(acctHome(alias))) return { ok: false, error: "없는 계정" };
