@@ -87,6 +87,12 @@ export interface AIStatus {
   backendSetting: AIBackendChoice;
   provider: string;
   model: string;
+  /** 짧은 표시명 (예: "Gemini 3.8 Flash Low") */
+  modelLabel?: string;
+  /** 자동으로 고른 모델인가 */
+  modelAuto?: boolean;
+  /** 자동 선택이 실패해 폴백했으면 그 이유 */
+  note?: string;
   keys: Record<string, boolean>;
   breakers: Record<string, { trippedForMs: number; reason: string; consecutive: number; closedForSession: boolean }>;
   queue: { active: number; waiting: number; limit: number };

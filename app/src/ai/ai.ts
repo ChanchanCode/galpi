@@ -23,15 +23,24 @@ export const AI_PROVIDERS: {
 
 export const DEFAULT_AI: AIConfig = {
   provider: "gemini",
-  models: { gemini: "gemini-2.5-flash-lite" },
+  // 비어 있음 = 자동(main 이 키로 쓸 수 있는 모델을 골라 준다). 예전에는 2.5-flash-lite 를 박아 둬서 새 키에서 404.
+  models: {},
   keyPresent: { gemini: false, openai: false, anthropic: false },
 };
+
+// 예전 고정 기본값이 저장돼 있던 것 — 사용자가 고른 것인지 알 수 없어 "자동"으로 본다(main 의 configuredRestModel 과 같은 규칙).
+const LEGACY_MODELS = new Set(["gemini-2.0-flash", "gemini-2.5-flash-lite"]);
+function dropLegacyModels(m: AIConfig["models"]): AIConfig["models"] {
+  const out: AIConfig["models"] = {};
+  for (const [p, v] of Object.entries(m) as [AIProvider, string | undefined][]) out[p] = v && !LEGACY_MODELS.has(v) && v !== "auto" ? v : "";
+  return out;
+}
 
 // settings.json 의 ai 조각 → 렌더러 상태. 평문 키 이전은 main 이 시작 시 처리한다.
 export function loadAI(ai: Partial<AIConfig> | undefined, keyPresent: Record<string, boolean>): AIConfig {
   return {
     provider: ai?.provider ?? DEFAULT_AI.provider,
-    models: { ...DEFAULT_AI.models, ...(ai?.models ?? {}) },
+    models: dropLegacyModels({ ...DEFAULT_AI.models, ...(ai?.models ?? {}) }),
     keyPresent: { ...DEFAULT_AI.keyPresent, ...keyPresent },
   };
 }

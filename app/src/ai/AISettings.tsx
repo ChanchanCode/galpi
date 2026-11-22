@@ -75,8 +75,8 @@ export function AISettings() {
     try {
       const r = await window.paperAPI.listModels(provider);
       if (r.error || !r.models) return setNote(r.error ?? "불러오기 실패");
+      // 목록만 채운다 — 예전에는 지금 모델이 목록에 없으면 첫 항목(알파벳순, 아무 모델)으로 바꿔 버렸다.
       setModels((m) => ({ ...m, [provider]: r.models! }));
-      if (r.models.length && !r.models.includes(model)) setAIModel(provider, r.models[0]);
     } catch (e) {
       setNote(errMsg(e));
     } finally {
@@ -85,6 +85,8 @@ export function AISettings() {
   };
 
   const agy = status?.agy;
+  // 자동으로 고른 API 키 모델 이름 — 지금 엔진이 이 제공자의 API 키로 나갈 때만 안다(구독이면 고르지 않는다).
+  const restAuto = status?.backend.id === "rest" && status.provider === provider && status.modelAuto ? status.model : "";
   const breakers = Object.entries(status?.breakers ?? {}).filter(
     ([, b]) => b.trippedForMs > 0 || b.closedForSession,
   );
@@ -115,6 +117,14 @@ export function AISettings() {
             </button>
           ))}
         </div>
+        {status && (() => {
+          const r = routeLine(status);
+          return (
+            <p className={`ai-line ${r.warn ? "warn" : ""}`} title={[status.backend.detail, status.note].filter(Boolean).join(" · ")}>
+              {r.text}
+            </p>
+          );
+        })()}
       </div>
 
       <div className="typo-section">
@@ -166,12 +176,12 @@ export function AISettings() {
       <div className="typo-section">
         <span className="ctrl-label">모델</span>
         <div className="ai-row">
-          <select value={model} onChange={(e) => setAIModel(provider, e.target.value)}>
+          <select value={model} onChange={(e) => setAIModel(provider, e.target.value)} title="자동: 이 키로 실제로 불리는 최신 저가 모델(Flash-Lite·mini·Haiku)">
+            <option value="">자동{restAuto ? ` · ${restAuto}` : ""}</option>
             {model && !list.includes(model) && <option value={model}>{model}</option>}
             {list.map((m) => (
               <option key={m} value={m}>{m}</option>
             ))}
-            {!list.length && !model && <option value="">—</option>}
           </select>
           <button className="seg-btn" onClick={loadModels} disabled={loading || !saved}>
             {loading ? "불러오는 중…" : "목록"}
@@ -233,6 +243,18 @@ export function AISettings() {
       )}
     </div>
   );
+}
+
+// 엔진 줄 아래 한 줄 — 지금 실제로 어디로 나가는지. 못 쓰는 상태면 이유를 그대로 보인다.
+function routeLine(s: Status): { text: string; warn: boolean } {
+  const model = `${s.modelLabel ?? s.model}${s.modelAuto ? " (자동)" : ""}`;
+  if (s.backend.id === "agy") {
+    // "아직 확인 전"은 문제가 아니다 — 첫 요청이 성공하면 로그인이 확인된다(진단 호출을 아끼는 설계).
+    const problem = !s.backend.ready && !!s.backend.detail && s.backend.detail !== "아직 확인 전";
+    return { text: `지금 · 구독 · ${problem ? s.backend.detail : model}`, warn: problem };
+  }
+  if (!s.keys[s.provider]) return { text: "지금 · API 키 · 키 없음", warn: true };
+  return { text: `지금 · API 키 · ${s.provider} · ${s.note ?? model}`, warn: !!s.note };
 }
 
 // ── 계정 · 한도 ────────────────────────────────────────────────────────
@@ -551,8 +573,9 @@ function ChatModelSection() {
   };
 
   const cur = list?.default ?? "";
+  const autoModels = list?.models.filter((m) => m.group === "auto") ?? [];
   const agyModels = list?.models.filter((m) => m.group === "agy") ?? [];
-  const restModels = list?.models.filter((m) => m.group !== "agy") ?? [];
+  const restModels = list?.models.filter((m) => m.group !== "agy" && m.group !== "auto") ?? [];
 
   return (
     <div className="typo-section">
@@ -564,6 +587,7 @@ function ChatModelSection() {
         <select value={cur} disabled={!list} onChange={(e) => void pick(e.target.value)}>
           {!list && <option value="">—</option>}
           {list && cur && !list.models.some((m) => m.id === cur) && <option value={cur}>{cur}</option>}
+          {autoModels.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
           {agyModels.length > 0 && (
             <optgroup label="agy">
               {agyModels.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}

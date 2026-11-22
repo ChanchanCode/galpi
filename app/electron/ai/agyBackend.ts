@@ -5,7 +5,8 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { docsRoot } from "../paths";
 import { readSettings } from "../settings";
-import { DEFAULT_CHAT_MODEL, type AgyQuotaView } from "./chatTypes";
+import { type AgyQuotaView } from "./chatTypes";
+import { configuredChatModel, resolveAgyModel } from "./models";
 import { AGENT_NAME, CHAT_AGENT_NAME, DEFAULT_MODEL, activeAccount, ensureAgent, fetchUsage, findAgy, geminiWindows, probeAgy, type QuotaBucket } from "./agy";
 import { disposeAllPools, findPool, getPool, type AgyPool, type AgyPoolOptions } from "./agyPool";
 import { AIError, type AIBackend, type AIBackendInfo, type AIChunk, type AIMessage, type AIStreamOpts } from "./types";
@@ -182,9 +183,11 @@ async function agyUsable(h: AgyHealth): Promise<boolean> {
 export async function prewarm(kind: AgyPoolKind = "translate", model?: string): Promise<AgyPool["stats"] | null> {
   const s = await readSettings();
   let m = String(model ?? "").trim();
-  if (!m) m = kind === "chat" ? (s.ai?.chatModel ?? "").trim() || DEFAULT_CHAT_MODEL : (s.ai?.agyModel ?? "").trim() || DEFAULT_MODEL;
+  if (!m) m = kind === "chat" ? configuredChatModel(s) : (s.ai?.agyModel ?? "").trim() || "auto";
   if (m.startsWith("rest:")) return null;
-  if (m.startsWith("agy:")) m = m.slice(4);
+  // 자동이면 service 와 같은 해석으로 고른다. 엔진이 API 키면 agy 를 데울 이유가 없다.
+  if (m === "auto" && s.ai?.backend === "rest") return null;
+  m = (await resolveAgyModel(kind, m === "auto" ? undefined : m)).model;
   if (!MODEL_RE.test(m)) return null;
   const h = await agyHealth();
   if (!(await agyUsable(h))) return null;

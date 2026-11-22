@@ -118,9 +118,10 @@ export const useStore = create<Store>((set, get) => ({
     const present = await window.paperAPI.setAIKey(provider, key);
     set((st) => ({ ai: { ...st.ai, keyPresent: { ...st.ai.keyPresent, ...present } } }));
   },
+  // model "" = 자동. 모델을 바꿨으면 이전 모델로 실패해 닫힌 기능을 다시 연다.
   setAIModel: (provider, model) => {
     set((st) => ({ ai: { ...st.ai, models: { ...st.ai.models, [provider]: model } } }));
-    void persistSettings(get);
+    void persistSettings(get).then(() => window.paperAPI.aiResetBreaker());
   },
 
   // ── 단축키 ──────────────────────────────────────────────────────

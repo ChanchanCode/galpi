@@ -2,6 +2,8 @@
 export const mockAI = { mode: "ok", calls: [] as { docId: string; ids: string[] }[], active: 0, max: 0, dropped: false };
 const running = new Map<string, AbortController>();
 export const resolvedBackendId = async () => "qa";
+// translateDoc 의 캐시 키 모델 — 실제 service.currentRoute 와 같은 모양.
+export const currentRoute = async () => ({ backend: "qa", provider: "qa", model: "qa", auto: true });
 export function cancelJobPrefix(prefix: string): void {
   for (const [id, ctrl] of running) if (id.startsWith(prefix)) ctrl.abort();
 }

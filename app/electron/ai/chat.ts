@@ -12,6 +12,7 @@ import path from "node:path";
 import { atomicWriteJson } from "../settings";
 import {
   DEFAULT_CHAT_MODEL,
+  LEGACY_CHAT_DEFAULT,
   type AttachmentUpload,
   type ChatAttachment,
   type ChatContextMode,
@@ -100,6 +101,8 @@ async function writeSession(docId: string, s: ChatSession): Promise<void> {
 function cleanModel(m: unknown): string | undefined {
   if (typeof m !== "string") return undefined;
   const t = m.trim().slice(0, 128);
+  // 예전 세션에 박힌 고정 기본값은 "자동"으로 — 엔진을 API 키로 바꿔도 채팅만 agy 로 가던 원인.
+  if (t === "auto" || t === LEGACY_CHAT_DEFAULT) return "auto";
   return /^(agy:[\w.\-]+|rest:(gemini|openai|anthropic):[\w.\-:/]+)$/.test(t) ? t : undefined;
 }
 const cleanContext = (c: unknown): ChatContextMode | undefined => (CONTEXTS.includes(c as ChatContextMode) ? (c as ChatContextMode) : undefined);

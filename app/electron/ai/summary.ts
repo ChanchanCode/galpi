@@ -9,7 +9,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { docsRoot } from "../paths";
 import { atomicWriteJson, readSettings, type Settings } from "../settings";
-import { DEFAULT_CHAT_MODEL, type PaperSummary, type SummaryEvent, type SummaryState } from "./chatTypes";
+import { type PaperSummary, type SummaryEvent, type SummaryState } from "./chatTypes";
+import { configuredChatModel } from "./models";
 import { parseSummaryJson } from "./chatParse";
 import { SUMMARY_REQUEST, summarySystem } from "./chatPrompts";
 import { buildPaperContext, loadDocumentCached, loadFormulaEdits } from "./paperContext";
@@ -43,9 +44,9 @@ export function aiExt(s: Settings): { chatModel?: string; auto?: { translate?: b
   return (s.ai ?? {}) as { chatModel?: string; auto?: { translate?: boolean; summary?: boolean } };
 }
 
+/** 채팅·요약 기본 모델 route. 비었거나 예전 고정 기본값이면 "auto"(엔진 설정을 따른다). */
 export async function defaultChatModel(): Promise<string> {
-  const m = aiExt(await readSettings()).chatModel;
-  return typeof m === "string" && m.trim() ? m.trim() : DEFAULT_CHAT_MODEL;
+  return configuredChatModel(await readSettings());
 }
 
 const summaryFile = (dir: string) => path.join(dir, "ai", "summary.json");

@@ -201,11 +201,17 @@ export class AgyPool {
           clearTimeout(timer);
           s.onEvent = null;
           // 파이프 stdin 이면 미로그인은 0.6초 만에 여기로 떨어진다.
-          const auth = /authentication required|log in|authentication failed/i.test(body.stderr ?? "");
+          const err = body.stderr ?? "";
+          const auth = /authentication required|log in|authentication failed/i.test(err);
+          // agy 가 내린 모델을 고르면 "invalid model selection … not recognized" 로 바로 종료한다(실측, 3.7-flash-low).
+          // 연결 오류가 아니라 설정 문제다 — config 로 올려야 service 가 모델 목록을 새로 받아 다시 고른다.
+          const badModel = /invalid model selection|not recognized as a known model/i.test(err);
           reject(
             auth
               ? new AIError("auth", "agy 로그인이 필요합니다. 터미널에서 `agy` 를 한 번 실행하세요.")
-              : new AIError("network", `agy 가 기동 중 종료됐습니다. ${(body.stderr ?? "").slice(0, 200)}`),
+              : badModel
+                ? new AIError("config", `agy 가 이 모델을 받지 않습니다(${this.model}). 모델 목록을 새로 받아 다시 고릅니다.`)
+                : new AIError("network", `agy 가 기동 중 종료됐습니다. ${err.slice(0, 200)}`),
           );
         }
       };

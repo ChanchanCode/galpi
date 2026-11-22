@@ -13,7 +13,7 @@ import { PRIORITY_BATCH } from "./queue";
 import { parseBlocksJson, prepare, resolve, type AnchorMode } from "./segment";
 import { cacheFor, type CacheContext, type CacheEntry } from "./translationCache";
 import type { TokenUsage } from "./types";
-import { runAIJob, cancelJobPrefix, resolvedBackendId, type AIJobResult } from "./service";
+import { runAIJob, cancelJobPrefix, currentRoute, resolvedBackendId, type AIJobResult } from "./service";
 import type { BlockKind } from "./estimate";
 import { estimate } from "./estimate";
 import { currentProcessing } from "../processing";
@@ -189,12 +189,9 @@ export async function cachedTranslations(
 }
 
 async function contextFor(feature = "translate.blocks"): Promise<CacheContext> {
-  const s = await readSettings();
-  const backend = s.ai?.backend ?? "auto";
-  const model =
-    backend === "rest"
-      ? (s.ai?.models?.[(s.ai?.provider ?? "gemini") as "gemini"] ?? "gemini-2.5-flash-lite")
-      : (s.ai?.agyModel ?? "gemini-3.7-flash-low");
+  // 캐시 키의 모델 = 실제로 나갈 모델. 예전에는 엔진 설정만 보고 따로 추측해서, "자동"이 API 키로 떨어지면
+  // agy 모델 이름(3.7-flash-low)이 REST 요청에 실려 404 가 났다.
+  const { model } = await currentRoute("translate");
   return { lang: "ko", model, promptVersion: promptFor(feature).version };
 }
 

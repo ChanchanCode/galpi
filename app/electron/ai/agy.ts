@@ -12,7 +12,9 @@ import { acctHome, ensureKeychain, isStoreHome, normalizeAlias, realHomeDir } fr
 export const AGENT_NAME = "galpi";
 // 채팅 전용 — view_file 이 더 있다. 번역 에이전트에 도구를 늘리면 남의 PDF 본문이 파일을 읽히게 할 수 있다.
 export const CHAT_AGENT_NAME = "galpi-chat";
-export const DEFAULT_MODEL = "gemini-3.7-flash-low";
+// 최후 폴백일 뿐이다 — 실제 모델은 models.resolveAgyModel 이 `agy models` 목록에서 고른다.
+// (3.7-flash-low 를 박아 뒀다가 agy 가 내리자 새 설치에서 번역이 전부 실패했다.)
+export const DEFAULT_MODEL = "gemini-3.8-flash-low";
 
 // 탐지: PATH → 흔한 설치 위치. 앱은 GUI 로 뜨므로 PATH 가 로그인 셸보다 빈약하다.
 const CANDIDATES = [

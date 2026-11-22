@@ -151,13 +151,16 @@ export interface AutoJobStatus {
 export interface ChatModelInfo {
   id: string;
   label: string; // 짧은 표시명 (예: "Gemini 3.8 Flash Medium")
-  group: "agy" | "gemini" | "openai" | "anthropic";
+  group: "auto" | "agy" | "gemini" | "openai" | "anthropic";
 }
 export interface ChatModelList {
-  models: ChatModelInfo[];
-  default: string; // 설정 ai.chatModel (없으면 agy:gemini-3.8-flash-medium)
+  models: ChatModelInfo[]; // 맨 앞은 id "auto"(자동 · 지금 고른 모델)
+  default: string; // 설정 ai.chatModel (없으면 "auto")
 }
-export const DEFAULT_CHAT_MODEL = "agy:gemini-3.8-flash-medium";
+// "auto" = 엔진 설정(구독/API 키)을 따라 그때 쓸 수 있는 모델을 고른다.
+export const DEFAULT_CHAT_MODEL = "auto";
+// 예전 고정 기본값 — 저장돼 있으면 사용자가 고른 것인지 알 수 없어 자동으로 본다.
+export const LEGACY_CHAT_DEFAULT = "agy:gemini-3.8-flash-medium";
 
 // ── agy 계정 (그냥 받아쓰기와 같은 저장소: ~/.claude/.state/gemini-accounts/<alias>) ──
 export interface AgyAccount {

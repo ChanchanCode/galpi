@@ -9,10 +9,13 @@ interface Props {
   onChange: (id: string) => void;
 }
 
-const GROUPS: { key: "agy" | "api"; label: string }[] = [
+// "auto"(자동 · 지금 고른 모델)는 묶음 이름 없이 맨 위.
+const GROUPS: { key: "auto" | "agy" | "api"; label: string }[] = [
+  { key: "auto", label: "" },
   { key: "agy", label: "Antigravity" },
   { key: "api", label: "API" },
 ];
+const inGroup = (key: string, group: string) => (key === "api" ? group !== "agy" && group !== "auto" : group === key);
 
 export function ModelPicker({ models, value, onChange }: Props) {
   const [open, setOpen] = useState(false);
@@ -67,11 +70,11 @@ export function ModelPicker({ models, value, onChange }: Props) {
             </button>
           )}
           {GROUPS.map((g) => {
-            const items = models.filter((m) => (g.key === "agy" ? m.group === "agy" : m.group !== "agy"));
+            const items = models.filter((m) => inGroup(g.key, m.group));
             if (!items.length) return null;
             return (
               <div key={g.key} className="chat-pop-group">
-                <div className="chat-pop-label">{g.label}</div>
+                {g.label && <div className="chat-pop-label">{g.label}</div>}
                 {items.map((m) => (
                   <button
                     key={m.id}

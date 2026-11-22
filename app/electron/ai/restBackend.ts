@@ -118,6 +118,11 @@ async function httpError(provider: string, r: Response): Promise<AIError> {
   if (r.status >= 500) {
     return new AIError("server", `${provider} 서버 오류 ${r.status}: ${msg}`, r.status);
   }
+  // Gemini 는 새로 만든 키(프로젝트)에 옛 모델을 404 "no longer available to new users" 로 막는다.
+  // 같은 모델이 옛 키에서는 돼서 "이 컴퓨터만 안 된다"로 보인다 → 고칠 곳을 바로 알려 준다.
+  if (r.status === 404 && provider === "gemini") {
+    return new AIError("config", `이 API 키로는 이 Gemini 모델을 쓸 수 없습니다. 설정 → AI 에서 다른 모델을 고르세요 (${msg})`, 404);
+  }
   return new AIError("config", `${provider} 요청 오류 ${r.status}: ${msg}`, r.status);
 }
 
@@ -125,12 +130,65 @@ function num(v: unknown): number {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
 
+// thinking 조절값 — 모델마다 받는 형식이 다르고, 틀린 값을 보내면 요청 전체가 400 으로 거부된다.
+//   Gemini 2.5 flash: thinkingBudget 0 (thinking 끔) · Gemini 3.x: budget 0 거부(사용자 실측) → thinkingLevel
+//   OpenAI o·gpt-5 계열: temperature 를 거부하고 reasoning_effort 로 조절한다.
+// 자동 선택(restAuto)은 아래 후보를 실호출로 확인해 받아 준 첫 값을 저장한다. 직접 고른 모델은 첫 후보를 쓴다.
+export function isOpenAIReasoning(model: string): boolean {
+  return /^(o\d|gpt-5)/i.test(model);
+}
+export function thinkingCandidates(provider: AIProvider, model: string): (Record<string, unknown> | null)[] {
+  if (provider === "gemini") {
+    if (/^gemini-2\.5-flash/.test(model)) return [{ thinkingBudget: 0 }, null];
+    if (/^gemini-([3-9]|\d{2,})/.test(model) || /^gemini-flash/.test(model)) return [{ thinkingLevel: "minimal" }, { thinkingLevel: "low" }, null];
+    return [null];
+  }
+  if (provider === "openai" && isOpenAIReasoning(model)) {
+    return [{ reasoning_effort: "none" }, { reasoning_effort: "minimal" }, { reasoning_effort: "low" }, null];
+  }
+  return [null];
+}
+// 직접 고른 모델에는 실측 없이 안전한 값만 — 확인된 것은 2.5 flash 의 budget 0 하나다.
+function defaultThinking(provider: AIProvider, model: string): Record<string, unknown> | null {
+  return provider === "gemini" && /^gemini-2\.5-flash/.test(model) ? { thinkingBudget: 0 } : null;
+}
+
 export class RestBackend implements AIBackend {
   readonly id = "rest" as const;
+  /** thinking: 자동 선택이 확인한 값(null = 붙이지 않음). undefined 면 defaultThinking. defaultModel 에만 쓴다. */
   constructor(
     private provider: AIProvider,
     private defaultModel: string,
+    private thinking?: Record<string, unknown> | null,
   ) {}
+
+  private thinkingFor(model: string): Record<string, unknown> | null {
+    if (model === this.defaultModel && this.thinking !== undefined) return this.thinking;
+    return defaultThinking(this.provider, model);
+  }
+
+  /**
+   * 이 키로 이 모델이 실제로 불리는가 — 번역과 **같은 모양**의 요청을 보내고 HTTP 상태만 본다.
+   * 받아 주면 본문은 바로 끊는다(몇 토큰). thinking 을 주면 그 값으로 보낸다.
+   */
+  async probe(model: string, thinking: Record<string, unknown> | null): Promise<{ ok: boolean; status: number; error?: AIError }> {
+    const key = await getSecret(this.provider);
+    if (!key) return { ok: false, status: 0, error: new AIError("config", "API 키가 없습니다.") };
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 20_000);
+    try {
+      const r = await this.request(key, model, { model, system: "Reply with OK.", user: "OK", signal: ctrl.signal, maxTokens: 16 }, thinking);
+      if (r.ok) {
+        ctrl.abort();
+        return { ok: true, status: r.status };
+      }
+      return { ok: false, status: r.status, error: await httpError(this.provider, r) };
+    } catch (err) {
+      return { ok: false, status: 0, error: new AIError("network", `연결 실패: ${String(err)}`) };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 
   async info(): Promise<AIBackendInfo> {
     const key = await getSecret(this.provider);
@@ -178,10 +236,16 @@ export class RestBackend implements AIBackend {
     if (sawUsage) yield { usage };
   }
 
-  private async request(key: string, model: string, opts: AIStreamOpts): Promise<Response> {
+  private async request(
+    key: string,
+    model: string,
+    opts: AIStreamOpts,
+    thinkingOverride?: Record<string, unknown> | null,
+  ): Promise<Response> {
     if (opts.messages?.length) return this.requestChat(key, model, opts, await loadTurns(opts.messages));
     const { system, user, signal } = opts;
     const temperature = opts.temperature ?? 0.2;
+    const thinking = thinkingOverride !== undefined ? thinkingOverride : this.thinkingFor(model);
     if (this.provider === "gemini") {
       return fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${key}`,
@@ -192,13 +256,18 @@ export class RestBackend implements AIBackend {
           body: JSON.stringify({
             systemInstruction: { parts: [{ text: system }] },
             contents: [{ parts: [{ text: user }] }],
-            // thinking 끄기 → 2.5 모델 지연 대폭 감소 (thinking 토큰은 출력으로 과금된다)
-            generationConfig: { temperature, thinkingConfig: { thinkingBudget: 0 } },
+            // thinking 을 줄이면 지연·비용이 크게 준다(thinking 토큰은 출력으로 과금된다). 형식은 thinkingFor 참고.
+            generationConfig: {
+              temperature,
+              ...(opts.maxTokens ? { maxOutputTokens: opts.maxTokens } : {}),
+              ...(thinking ? { thinkingConfig: thinking } : {}),
+            },
           }),
         },
       );
     }
     if (this.provider === "openai") {
+      const reasoning = isOpenAIReasoning(model);
       return fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
@@ -206,7 +275,10 @@ export class RestBackend implements AIBackend {
         body: JSON.stringify({
           model,
           stream: true,
-          temperature,
+          // o·gpt-5 계열은 temperature 를 400 으로 거부한다.
+          ...(reasoning ? {} : { temperature }),
+          ...(opts.maxTokens ? { max_completion_tokens: opts.maxTokens } : {}),
+          ...(thinking ?? {}),
           // 이게 없으면 스트리밍에서 usage 가 아예 오지 않는다 (H7)
           stream_options: { include_usage: true },
           messages: [

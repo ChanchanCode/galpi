@@ -29,7 +29,7 @@ const ERR_LABEL: Record<string, string> = {
 };
 
 // 번역 모델은 agy 모델 목록에서 **정확한 이름**으로 고른다(사용자 요청 — "빠름/정확" 은 무엇인지 알 수 없다).
-// D5 — 기본은 gemini-3.7-flash-low. 모델을 바꾸면 번역 캐시 키가 달라져 기존 번역은 다시 돈다.
+// 기본은 "자동"(목록의 최신 Flash low). 모델을 바꾸면 번역 캐시 키가 달라져 기존 번역은 다시 돈다.
 interface Props {
   anchor: React.RefObject<HTMLElement>;
   plan: TranslatePlan | null;
@@ -55,7 +55,7 @@ export function TranslatePopover({ anchor, plan, progress, running, onStart, onC
       .then((s) => {
         if (!alive) return;
         setStatus(s);
-        setModel(s.model);
+        setModel(s.modelAuto ? "" : s.model);
       })
       .catch(() => {});
     void window.paperAPI
@@ -105,7 +105,7 @@ export function TranslatePopover({ anchor, plan, progress, running, onStart, onC
     <div className="tr-pop" ref={boxRef} style={{ right }}>
       <div className="tr-pop-row tr-pop-head">
         <span>{agy ? "Antigravity 구독" : "API 키"}</span>
-        {!agy && <span className="tr-pop-model">{status?.provider ?? ""}</span>}
+        {!agy && status && <span className="tr-pop-model" title={status.model}>{status.provider} · {status.modelLabel ?? status.model}</span>}
       </div>
 
       {running ? (
@@ -131,11 +131,19 @@ export function TranslatePopover({ anchor, plan, progress, running, onStart, onC
         </>
       ) : (
         <>
-          {err && <div className="tr-pop-row tr-pop-err" title={err.message}>{ERR_LABEL[err.kind] ?? "오류"}</div>}
+          {err && (
+            <div className="tr-pop-row tr-pop-err">
+              <span>
+                {ERR_LABEL[err.kind] ?? "오류"}
+                {err.message && <span className="tr-pop-errmsg">{err.message.slice(0, 200)}</span>}
+              </span>
+            </div>
+          )}
           {agy && (
             <div className="tr-pop-row">
               <span className="tr-pop-k">모델</span>
               <select className="tr-pop-select" value={model} onChange={(e) => pick(e.target.value)} title={model}>
+                <option value="">자동{status?.modelAuto && status.modelLabel ? ` · ${status.modelLabel}` : ""}</option>
                 {model && !agyModels.some((m) => m.id === model) && <option value={model}>{model}</option>}
                 {agyModels.map((m) => (
                   <option key={m.id} value={m.id}>{m.label}</option>

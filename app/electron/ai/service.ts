@@ -5,11 +5,12 @@
 // 재시도는 5xx/네트워크만, 이미 흘린 텍스트가 없을 때만. 429 는 재시도하지 않는다(H3).
 import { ipcMain, type IpcMainInvokeEvent } from "electron";
 import { existsSync } from "node:fs";
-import { getSecret, readSettings, saveSettings, secretsPresent, setSecret, type AIProvider } from "../settings";
+import { AI_PROVIDERS, getSecret, readSettings, saveSettings, secretsPresent, setSecret, type AIProvider, type Settings } from "../settings";
 import { MAIN_ALIAS, acctHome, listAccounts, normalizeAlias, openLogin, syncTokenCopies, validAlias } from "./accounts";
 import { agyCwd, findAgy, gcConversations } from "./agy";
 import {
   AgyBackend,
+  type AgyBackendOpts,
   agyHealth,
   invalidateAgyHealth,
   invalidateQuotaView,
@@ -24,7 +25,19 @@ import {
 } from "./agyBackend";
 import { liveConversationIds } from "./agyPool";
 import type { AgyAccount } from "./chatTypes";
-import { REST_DEFAULT_MODELS, chatModelList, configuredRestModel, invalidateModelCache, noteRestModels, parseRoute } from "./models";
+import {
+  REST_DEFAULT_MODELS,
+  agyModelLabel,
+  chatModelList,
+  configuredRestModel,
+  invalidateModelCache,
+  noteRestModels,
+  parseRoute,
+  resolveAgyModel,
+  restLabel,
+  type ModelKind,
+} from "./models";
+import { forgetRestAuto, listModels, onKeyChanged, restAutoPick } from "./restAuto";
 import * as breaker from "./breaker";
 import { allBias, estimate, EST_RULES_VERSION, observe, observeOut, type BlockKind } from "./estimate";
 import { costOf } from "./pricing";
@@ -47,7 +60,6 @@ import { currentProcessing, processingMode } from "../processing";
 
 export { parseRoute, type ParsedRoute } from "./models";
 
-const AGY_DEFAULT_MODEL = "gemini-3.7-flash-low";
 const MAX_RETRIES = 2;
 const BACKOFF_MS = [600, 1800];
 const CHAT_MAX_TOKENS = 8192;
@@ -76,51 +88,96 @@ const queue = new JobQueue(2, 1);
 const running = new Map<string, AbortController>();
 let callSeq = 0;
 
-// 백엔드 선택. "auto" 는 agy 가 살아 있으면 agy, 아니면 BYOK REST 로 떨어진다(D1+D2).
-// **여기가 백엔드 교체 지점이다.** 다른 파일은 AIBackend 만 본다.
-async function resolveBackend(): Promise<{ backend: AIBackend; provider: string; model: string }> {
+// 백엔드·모델 선택. **여기가 교체 지점이다.** 다른 파일은 AIBackend 만 본다.
+//   엔진  "auto" = agy 가 로그인돼 있으면 agy(구독), 아니면 API 키 · "agy" = 구독만 · "rest" = API 키만
+//   모델  설정에 직접 고른 값이 있으면 그것, 없으면 자동 — agy 는 `agy models` 목록, API 키는 목록+실호출 확인.
+//         직접 고른 agy 모델도 agy 가 내렸으면(목록에 없으면) 자동으로 바꾼다.
+// kind: 번역(짧은 배치·속도) / 채팅·요약(답의 질) — 자동 모델 등급이 다르다.
+interface Resolved {
+  backend: AIBackend;
+  provider: string;
+  model: string;
+  /** 자동으로 고른 모델인가 */
+  auto: boolean;
+  /** 자동 선택이 실패해 폴백했으면 그 이유(설정 화면에 보인다) */
+  note?: string;
+}
+
+async function agyRoute(kind: ModelKind, explicit: string | undefined, opts: AgyBackendOpts = {}): Promise<Resolved> {
+  const { model, auto } = await resolveAgyModel(kind, explicit);
+  return { backend: new AgyBackend(model, opts), provider: "gemini-agy", model, auto };
+}
+
+/** API 키 제공자: 고른 제공자에 키가 없으면 키가 있는 제공자로(키를 넣은 뒤 다른 탭을 눌러 보기만 해도 막히던 문제). */
+async function restProvider(s: Settings): Promise<AIProvider> {
+  const keys = await secretsPresent();
+  const pref = (s.ai?.provider ?? "gemini") as AIProvider;
+  return keys[pref] ? pref : AI_PROVIDERS.find((p) => keys[p]) ?? pref;
+}
+
+async function restRoute(s: Settings, provider: AIProvider): Promise<Resolved> {
+  const explicit = configuredRestModel(s, provider);
+  if (explicit) return { backend: new RestBackend(provider, explicit), provider, model: explicit, auto: false };
+  try {
+    const p = await restAutoPick(provider);
+    return { backend: new RestBackend(provider, p.model, p.thinking ?? null), provider, model: p.model, auto: true };
+  } catch (err) {
+    // 키 없음·잘못된 키·전부 거부 — 요청을 보내면 그 원인이 그대로 뜬다(상태 조회는 깨뜨리지 않는다).
+    const model = REST_DEFAULT_MODELS[provider];
+    return { backend: new RestBackend(provider, model), provider, model, auto: true, note: toAIError(err).message };
+  }
+}
+
+async function resolveBackend(kind: ModelKind = "translate"): Promise<Resolved> {
   const s = await readSettings();
   const want = s.ai?.backend ?? "auto";
+  const agyExplicit = kind === "translate" ? s.ai?.agyModel : undefined;
   if (want !== "rest") {
-    const h = await agyHealth();
-    // 로그인 미확인이라도 설정에 성공 이력이 있으면 agy 로 간다 — 진단 호출을 아끼기 위해서다.
+    // 로그인 미확인이라도 설정에 성공 이력이 있으면 agy 로 간다 — 진단 호출(=키체인 프롬프트)을 아끼기 위해서다.
     const verifiedBefore = !!s.ai?.agyOk;
-    if (h.bin && (h.loggedIn || verifiedBefore)) {
-      const model = (s.ai?.agyModel ?? "").trim() || AGY_DEFAULT_MODEL;
-      return { backend: new AgyBackend(model), provider: "gemini-agy", model };
-    }
-    if (want === "agy") {
-      // 명시적으로 agy 를 골랐는데 못 쓰면 조용히 REST 로 갈아타지 않는다 —
-      // 사용자가 "구독으로 돌고 있다"고 믿는 채로 유료 키가 태워지면 안 된다.
-      return { backend: new AgyBackend(AGY_DEFAULT_MODEL), provider: "gemini-agy", model: AGY_DEFAULT_MODEL };
-    }
+    let h = await agyHealth();
+    // 성공 이력이 없는 새 설치에서 "자동"은 agy 를 한 번도 시도하지 않고 REST 로 떨어졌다 —
+    // agy 가 로그인돼 있어도 API 키 경로만 타서, 키·모델이 막히면 번역·채팅이 다 실패했다(사용자 신고).
+    // 아직 확인 전이면 세션당 한 번만 실제로 확인한다(결과는 캐시돼 다시 부르지 않는다).
+    if (want === "auto" && h.bin && !h.loggedIn && h.checkedAt === 0 && !verifiedBefore) h = await agyHealth(true);
+    // 성공 이력은 "아직 확인 전"일 때만 믿는다 — 실제로 인증이 실패한 뒤에는 자동이 API 키로 넘어가야 한다.
+    if (h.bin && (h.loggedIn || (verifiedBefore && h.checkedAt === 0))) return agyRoute(kind, agyExplicit);
+    // 명시적으로 agy 를 골랐는데 못 쓰면 조용히 REST 로 갈아타지 않는다 —
+    // 사용자가 "구독으로 돌고 있다"고 믿는 채로 유료 키가 태워지면 안 된다. 원인은 요청이 오류로 알린다.
+    if (want === "agy") return agyRoute(kind, agyExplicit);
   }
-  const provider = (s.ai?.provider ?? "gemini") as AIProvider;
-  const model = configuredRestModel(s, provider) || REST_DEFAULT_MODELS[provider];
-  return { backend: new RestBackend(provider, model), provider, model };
+  return restRoute(s, await restProvider(s));
 }
 
 // 잡 단위 선택 — route 가 있으면 그 백엔드로 못 박는다. 채팅에서 고른 모델이 agy 인데 못 쓰면
 // REST 로 조용히 갈아타지 않고 그 백엔드의 auth/config 오류를 그대로 돌려준다(유료 키가 몰래 타면 안 된다).
-async function resolveBackendFor(job: AIJobInput): Promise<{ backend: AIBackend; provider: string; model: string }> {
-  if (job.route === undefined || job.route === "") {
-    const r = await resolveBackend();
+// route "auto"(채팅·요약 기본) 는 엔진 설정을 따른다.
+async function resolveBackendFor(job: AIJobInput): Promise<Resolved> {
+  const route = job.route ? parseRoute(job.route) : null;
+  if (job.route && !route) throw new AIError("config", `모델 경로가 올바르지 않습니다: ${String(job.route).slice(0, 60)}`);
+  if (!route || route.kind === "auto") {
+    const r = await resolveBackend(route ? "chat" : "translate");
     // 경로 없이 들어온 대화 잡도 agy 면 턴 한도를 받아야 한다.
     if (r.backend.id === "agy" && job.turnTimeoutMs) {
       return { ...r, backend: new AgyBackend(r.model, { turnTimeoutMs: job.turnTimeoutMs }) };
     }
     return r;
   }
-  const route = parseRoute(job.route);
-  if (!route) throw new AIError("config", `모델 경로가 올바르지 않습니다: ${String(job.route).slice(0, 60)}`);
-  if (route.kind === "agy") {
-    return {
-      backend: new AgyBackend(route.model, { explicit: true, turnTimeoutMs: job.turnTimeoutMs }),
-      provider: "gemini-agy",
-      model: route.model,
-    };
-  }
-  return { backend: new RestBackend(route.provider, route.model), provider: route.provider, model: route.model };
+  if (route.kind === "agy") return agyRoute("chat", route.model, { explicit: true, turnTimeoutMs: job.turnTimeoutMs });
+  return { backend: new RestBackend(route.provider, route.model), provider: route.provider, model: route.model, auto: false };
+}
+
+/** 지금 이 기능이 실제로 나갈 백엔드·모델 — 번역 캐시 키·견적이 실제 호출과 어긋나지 않게 같은 해석을 쓴다. */
+export async function currentRoute(kind: ModelKind = "translate"): Promise<{ backend: string; provider: string; model: string; auto: boolean }> {
+  const r = await resolveBackend(kind);
+  return { backend: r.backend.id, provider: r.provider, model: r.model, auto: r.auto };
+}
+
+// 쓰다가 모델이 거부됐다 — 자동으로 고른 것이면 잊어서 다음 호출이 다시 고르게 한다.
+async function onModelRejected(r: Resolved, e: AIError): Promise<void> {
+  if (!r.auto || e.kind !== "config") return;
+  if (r.backend.id === "rest" && (e.status === 404 || e.status === 400)) await forgetRestAuto(r.provider as AIProvider).catch(() => {});
+  if (r.backend.id === "agy" && /모델/.test(e.message)) invalidateModelCache();
 }
 
 /** 견적용 텍스트 조각 — 대화면 텍스트 part 전부(이미지는 세지 않는다), 아니면 text. */
@@ -281,6 +338,7 @@ export async function runAIJob(
             lastErr = ae;
             if (backend.id === "agy" && ae.kind === "auth") markAuthFailed(ae.message);
             breaker.onFailure(providerKey, job.feature, ae);
+            await onModelRejected(resolved, ae);
             const partial = err as { partial?: string; partialUsage?: TokenUsage; ms?: number };
             lastPartial = partial.partial ?? "";
             await write(ae, attempt, partial.partial?.length ?? 0, partial.partialUsage ?? { ...ZERO_USAGE }, partial.ms ?? 0);
@@ -377,12 +435,15 @@ export function registerAIService(): void {
   // 자가 진단 한 방 — 백엔드·키·차단기·큐를 한 번에 찍는다.
   ipcMain.handle("ai:status", async () => {
     const s = await readSettings();
-    const { backend, provider, model } = await resolveBackend();
+    const { backend, provider, model, auto, note } = await resolveBackend();
     return {
       backend: await backend.info(),
       backendSetting: s.ai?.backend ?? "auto",
       provider,
       model,
+      modelLabel: backend.id === "agy" ? await agyModelLabel(model) : restLabel(model),
+      modelAuto: auto,
+      note,
       keys: await secretsPresent(),
       breakers: breaker.snapshot(),
       queue: queue.stats,
@@ -418,7 +479,14 @@ export function registerAIService(): void {
   ipcMain.handle("agy:gc", async (_e, dryRun?: boolean) => gcConversations({ dryRun: !!dryRun, keepIds: liveConversationIds() }));
 
   // ── 채팅 모델 ──────────────────────────────────────────────────
-  ipcMain.handle("ai:chatModels", async (_e, refresh?: boolean) => chatModelList(!!refresh));
+  // 맨 앞에 "자동 · <지금 고른 모델>" — 엔진 설정(구독/API 키)을 따라간다.
+  ipcMain.handle("ai:chatModels", async (_e, refresh?: boolean) => {
+    const l = await chatModelList(!!refresh);
+    const r = await resolveBackend("chat").catch(() => null);
+    const label = r ? (r.backend.id === "agy" ? await agyModelLabel(r.model) : restLabel(r.model)) : "";
+    l.models.unshift({ id: "auto", label: label ? `자동 · ${label}` : "자동", group: "auto" });
+    return l;
+  });
   ipcMain.handle("ai:setChatModel", async (_e, id: string) => {
     if (!parseRoute(id)) return false;
     await saveSettings({ ai: { chatModel: String(id).trim() } });
@@ -455,12 +523,14 @@ export function registerAIService(): void {
   ipcMain.handle("ai:setBackend", async (_e, backend: "auto" | "agy" | "rest") => {
     await saveSettings({ ai: { backend } });
     invalidateAgyHealth();
+    breaker.reset(); // 엔진을 바꿨으면 이전 엔진으로 실패해 닫힌 기능을 다시 연다
     return true;
   });
 
-  // 번역 시작 팝업에서 고르는 품질(low/medium). §D5 — medium 은 thinking 에 토큰을 크게 쓴다.
+  // 번역 시작 팝업에서 고르는 agy 모델. "" = 자동(최신 Flash low). §D5 — medium 은 thinking 에 토큰을 크게 쓴다.
   ipcMain.handle("agy:setModel", async (_e, model: string) => {
-    await saveSettings({ ai: { agyModel: String(model || "").slice(0, 64) || AGY_DEFAULT_MODEL } });
+    const m = String(model || "").trim().slice(0, 64);
+    await saveSettings({ ai: { agyModel: m === "auto" ? "" : m } });
     return true;
   });
 
@@ -473,6 +543,7 @@ export function registerAIService(): void {
   ipcMain.handle("ai:setKey", async (_e, provider: AIProvider, key: string) => {
     await setSecret(provider, key ?? "");
     breaker.reset(); // 키를 고쳤으면 그 키로 실패했던 차단을 풀어 준다
+    onKeyChanged(provider); // 새 키로 모델을 다시 고른다(저장된 선택은 키 지문이 달라 저절로 무효)
     return secretsPresent();
   });
   ipcMain.handle("ai:keyStatus", async () => secretsPresent());
@@ -527,31 +598,4 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
     };
     signal.addEventListener("abort", onAbort, { once: true });
   });
-}
-
-async function listModels(provider: AIProvider, key: string): Promise<string[]> {
-  if (provider === "gemini") {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=${key}`);
-    if (!r.ok) throw new AIError(r.status === 401 || r.status === 403 ? "auth" : "server", `오류 ${r.status}`, r.status);
-    const j = (await r.json()) as any;
-    return (j.models ?? [])
-      .filter((m: any) => (m.supportedGenerationMethods ?? []).includes("generateContent"))
-      .map((m: any) => String(m.name ?? "").replace(/^models\//, ""))
-      .filter(Boolean);
-  }
-  if (provider === "openai") {
-    const r = await fetch("https://api.openai.com/v1/models", { headers: { Authorization: `Bearer ${key}` } });
-    if (!r.ok) throw new AIError(r.status === 401 || r.status === 403 ? "auth" : "server", `오류 ${r.status}`, r.status);
-    const j = (await r.json()) as any;
-    return (j.data ?? [])
-      .map((m: any) => m.id as string)
-      .filter((id: string) => /^(gpt|o\d|chatgpt)/i.test(id))
-      .sort();
-  }
-  const r = await fetch("https://api.anthropic.com/v1/models?limit=100", {
-    headers: { "x-api-key": key, "anthropic-version": "2023-06-01" },
-  });
-  if (!r.ok) throw new AIError(r.status === 401 || r.status === 403 ? "auth" : "server", `오류 ${r.status}`, r.status);
-  const j = (await r.json()) as any;
-  return (j.data ?? []).map((m: any) => m.id as string).filter(Boolean);
 }

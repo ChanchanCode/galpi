@@ -17,11 +17,23 @@ export function autoOptions(raw?: Partial<AutoOptions>): AutoOptions {
   return { translate: raw?.translate !== false, summary: raw?.summary !== false, pdf: raw?.pdf === true };
 }
 
+// API 키 경로의 자동 선택 결과 — 키 지문(keyTag)이 같을 때만 다시 쓴다(키를 바꾸면 다시 고른다).
+export interface RestAutoPick {
+  model: string;
+  // 요청에 붙일 thinking 조절값(Gemini thinkingConfig · OpenAI reasoning_effort). 실호출로 받아 준 값만.
+  thinking?: Record<string, unknown> | null;
+  keyTag: string;
+  at: number;
+}
+
 export interface AISettings {
   provider?: AIProvider;
+  // 제공자별로 사용자가 직접 고른 모델. 비었으면 자동.
   models?: Partial<Record<AIProvider, string>>;
-  // "auto" = agy 가 살아 있으면 agy, 아니면 BYOK REST (기본).
+  restAuto?: Partial<Record<AIProvider, RestAutoPick>>;
+  // "auto" = agy 가 로그인돼 있으면 agy, 아니면 BYOK REST (기본).
   backend?: "auto" | "agy" | "rest";
+  // 번역 agy 모델. 비었으면 자동(최신 Flash low).
   agyModel?: string;
   // 한 번이라도 agy 턴이 성공했는가 — 진단 호출(=키체인 프롬프트)을 아끼려고 기억해 둔다.
   agyOk?: boolean;
