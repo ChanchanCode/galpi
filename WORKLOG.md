@@ -1,5 +1,17 @@
 # 작업 로그
 
+[2026-11-22 18:45] v0.4.1 공개 배포
+
+한 일:
+- master(431a5ef)와 v0.4.1 태그를 푸시했다. release.yml 빌드 1분 38초 성공. 릴리스 제목과 설치 안내(엔진 자동·모델 자동)를 넣었다.
+
+검증:
+- 인증 없이 공개 DMG HTTP 200. latest-mac.yml·releases/latest API 모두 0.4.1. DMG SHA-256 `b0d164cdbd171bf0278d302a857f9b13923d024026bbf368854ed728b888d7e3`(GitHub digest).
+- DMG를 받아 설치해 보는 확인은 하지 않았다. 설치 앱(/Applications/Galpi.app)은 교체하지 않았다. 다음 실행 때 자동 업데이트로 받는다.
+
+결과:
+- https://github.com/ChanchanCode/galpi/releases/tag/v0.4.1
+
 [2026-11-22 18:25] 0.4.1 — 모델 자동 선택, 엔진(구독/API 키) 설정 정리
 
 한 일:
